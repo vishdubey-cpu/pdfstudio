@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://pdfstudio.app/sitemap.xml
+
+# Block API and file download routes from indexing
+Disallow: /api/
+Disallow: /api/files/

@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  body {
+    background: #0a0a0f;
+    color: #f0ede8;
+    font-family: 'DM Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Grain overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.35;
+  }
+
+  ::selection { background: rgba(232,213,176,0.2); color: #f0ede8; }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-accent text-bg font-medium px-6 py-2.5 rounded-full text-sm transition-all hover:bg-accent2 active:scale-95;
+  }
+
+  .btn-ghost {
+    @apply border border-white/10 text-muted px-6 py-2.5 rounded-full text-sm transition-all hover:border-white/20 hover:text-white active:scale-95;
+  }
+
+  .card {
+    @apply bg-surface border border-white/[0.07] rounded-2xl transition-all duration-200;
+  }
+
+  .card:hover {
+    @apply border-accent/20 shadow-2xl -translate-y-0.5;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
