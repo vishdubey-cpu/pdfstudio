@@ -26,7 +26,7 @@ pdfstudio/
 │   ├── vite.config.js
 │   ├── tailwind.config.js
 │   ├── postcss.config.js
-│   ├── vercel.json            # ← to be replaced with netlify.toml
+│   ├── netlify.toml           # SPA catch-all redirect for Netlify
 │   └── src/
 │       ├── main.jsx
 │       ├── App.jsx
@@ -95,13 +95,13 @@ Express entry point. Key config:
 ### Frontend (`.env` / Netlify dashboard)
 | Variable       | Value (prod)                        |
 |----------------|-------------------------------------|
-| `VITE_API_URL` | `https://<your-railway-app>.up.railway.app/api` |
+| `VITE_API_URL` | `https://backend-production-a346.up.railway.app/api` |
 
 ### Backend (`.env` / Railway dashboard)
 | Variable        | Value (prod)           |
 |-----------------|------------------------|
 | `PORT`          | Set automatically by Railway |
-| `FRONTEND_URL`  | `https://<your-netlify-app>.netlify.app` |
+| `FRONTEND_URL`  | `https://pdfstudio1.netlify.app` |
 
 ---
 
@@ -129,49 +129,28 @@ The SPA needs a catch-all redirect on the host so deep links don't 404.
 
 ---
 
-## Next Steps (in order)
+## Deployment
 
-### 1. Replace `vercel.json` with `netlify.toml`
+| Service  | URL |
+|----------|-----|
+| Frontend | https://pdfstudio1.netlify.app |
+| Backend  | https://backend-production-a346.up.railway.app |
+| GitHub   | https://github.com/vishdubey-cpu/pdfstudio |
 
-Delete `frontend/vercel.json` and create `frontend/netlify.toml`:
+### Railway project
+- **Project**: `pdfstudio-backend` (ID: `1bee7255-5e5f-4605-a14e-d1b9d9f98444`)
+- **Service**: `backend` (ID: `b2f25c9a-36f1-4f4f-8f9e-b23e0fded1d5`)
+- **Root directory**: `/backend`
+- **Health check**: `/health`
+- Auto-deploys on every push to `main`
 
-```toml
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-```
+### Remaining manual step — set `VITE_API_URL` on Netlify
 
-This replaces the Vercel SPA routing config with the Netlify equivalent.
+Netlify doesn't expose an unauthenticated API. Do this once in the Netlify dashboard:
 
-### 2. Initialize Git and push to GitHub
-
-```bash
-cd /path/to/pdfstudio
-git init
-git add .
-git commit -m "Initial commit"
-# Create a repo on github.com, then:
-git remote add origin https://github.com/<you>/pdfstudio.git
-git push -u origin main
-```
-
-### 3. Deploy frontend to Netlify
-
-1. Connect the GitHub repo to Netlify
-2. Set **Base directory**: `frontend`
-3. Set **Build command**: `npm run build`
-4. Set **Publish directory**: `frontend/dist`
-5. Add environment variable: `VITE_API_URL=https://<railway-url>/api`
-6. Netlify auto-deploys on every push to `main`
-
-### 4. Deploy backend to Railway
-
-1. Create a new Railway project → link GitHub repo
-2. Set **Root directory**: `backend`
-3. Railway detects `package.json` and runs `npm start`
-4. Add environment variable: `FRONTEND_URL=https://<netlify-url>`
-5. Railway provides a public HTTPS URL — paste it into Netlify's `VITE_API_URL`
+1. Go to **https://app.netlify.com/sites/pdfstudio1/configuration/env**
+2. Add variable: `VITE_API_URL` = `https://backend-production-a346.up.railway.app/api`
+3. Trigger a redeploy (Deploys → Trigger deploy)
 
 ---
 
