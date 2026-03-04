@@ -19,15 +19,32 @@ const execFileAsync   = promisify(execFile);
 const inflateAsync    = promisify(zlib.inflate);
 const inflateRawAsync = promisify(zlib.inflateRaw);
 
-// ─── In-memory job store (purge stale entries every 10 min) ──────────────────
-const compressionJobs = new Map();
-setInterval(() => {
-  const cutoff = Date.now() - 2 * 60 * 60 * 1000;
-  for (const [id, job] of compressionJobs)
-    if (job.createdAt < cutoff) compressionJobs.delete(id);
-}, 10 * 60 * 1000);
+// ─── File-based job store ─────────────────────────────────────────────────────
+// Using JSON files instead of an in-memory Map so jobs survive process restarts
+// (e.g. Railway redeploys between POST and the first poll).
+const JOBS_DIR = OUTPUT_DIR; // reuse the same outputs folder
 
-// ─── Inflate helper: tries zlib first, then raw deflate ──────────────────────
+function jobFile(jobId) {
+  return path.join(JOBS_DIR, `job-${jobId}.json`);
+}
+
+async function setJob(jobId, data) {
+  try {
+    await fs.writeJson(jobFile(jobId), { ...data, updatedAt: Date.now() });
+  } catch (e) {
+    console.error('[job] Failed to write job file:', e.message);
+  }
+}
+
+async function getJob(jobId) {
+  try {
+    return await fs.readJson(jobFile(jobId));
+  } catch {
+    return null; // file not found or unreadable
+  }
+}
+
+// ─── Inflate helper ───────────────────────────────────────────────────────────
 async function tryInflate(buf) {
   try { return await inflateAsync(buf); }    catch {}
   try { return await inflateRawAsync(buf); } catch {}
@@ -70,14 +87,13 @@ function undoPNGPredictor(inflated, width, channels) {
   return out;
 }
 
-// ─── Extract a number from a pdf-lib number object ───────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function pdfNum(obj) {
   if (!obj) return 0;
   if (typeof obj.asNumber === 'function') return obj.asNumber();
   return obj.numberValue ?? obj.value ?? 0;
 }
 
-// ─── Resolve the Filter name from a pdf-lib dict entry ───────────────────────
 function resolveFilter(fe) {
   if (!fe) return null;
   if (fe.encodedName) return fe.encodedName;
@@ -86,22 +102,19 @@ function resolveFilter(fe) {
   return null;
 }
 
-// ─── Determine channel count from a PDF ColorSpace entry ─────────────────────
-// Returns 1 (gray) or 3 (rgb/cmyk-treated-as-rgb) or null (skip).
+// Returns channel count for FlateDecode images (1 = gray, 3 = rgb, null = skip)
 function guessChannels(cs) {
-  if (!cs) return null; // no explicit CS — can't safely handle FlateDecode
+  if (!cs) return null;
   const name = cs.encodedName;
   if (name) {
     if (name === '/DeviceGray' || name === '/CalGray') return 1;
     if (name === '/DeviceRGB'  || name === '/CalRGB')  return 3;
-    if (name === '/DeviceCMYK') return 4; // we'll skip 4-ch FlateDecode
-    return null;
+    return null; // CMYK raw, Indexed, etc. — skip
   }
-  // PDFArray — look for ICCBased, Indexed, etc.
+  // PDFArray: [/ICCBased, ref] or [/CalRGB, dict]
   if (Array.isArray(cs.array) && cs.array.length >= 1) {
     const head = cs.array[0]?.encodedName;
-    if (head === '/ICCBased') return 3;  // almost always sRGB-tagged
-    if (head === '/Indexed')  return 1;  // 1-byte index per pixel — skip as complex
+    if (head === '/ICCBased') return 3; // almost always sRGB-tagged
     if (head === '/CalRGB')   return 3;
     if (head === '/CalGray')  return 1;
   }
@@ -110,17 +123,12 @@ function guessChannels(cs) {
 
 // ─── Core: compress every image in the PDF in parallel ───────────────────────
 //
-//  JPEG (DCTDecode):
-//    • Sharp can decode RGB, Gray AND CMYK JPEG and always outputs sRGB/Gray.
-//    • We update the dict's ColorSpace to match the output, so the PDF stays valid.
-//    • We add image downscaling (maxDimension) — the #1 lever iLovePDF uses.
+// DCTDecode (JPEG): Sharp handles RGB, Grayscale AND CMYK JPEG.
+//   Applies quality reduction + downscaling, updates dict ColorSpace to match.
 //
-//  PNG-like (FlateDecode):
-//    • Inflate → undo PNG row-predictor → convert to JPEG via sharp.
-//    • Handles DeviceRGB, DeviceGray, ICCBased (3-ch).
-//    • Skips 4-channel (CMYK raw) FlateDecode to avoid colour corruption.
+// FlateDecode (PNG-like): inflate → undo predictor → convert to JPEG via sharp.
 //
-// Returns { path, size } or null if nothing could be improved.
+// Returns { path, size } or null if nothing improved.
 async function compressImages(inputPath, jpegQuality, maxDimension) {
   const pdfBytes = await fs.readFile(inputPath);
 
@@ -146,12 +154,10 @@ async function compressImages(inputPath, jpegQuality, maxDimension) {
     const subtype = dict.get(PDFName.of('Subtype'));
     if (subtype?.encodedName !== '/Image') continue;
 
-    // Minimum pixel size — skip tiny icons / line-art bullets
     const w = pdfNum(dict.get(PDFName.of('Width')));
     const h = pdfNum(dict.get(PDFName.of('Height')));
     if (w < 64 || h < 64) continue;
 
-    // Only 8-bit images (skip 1-bit masks, 16-bit etc.)
     const bpc = pdfNum(dict.get(PDFName.of('BitsPerComponent')));
     if (bpc !== 0 && bpc !== 8) continue;
 
@@ -160,9 +166,7 @@ async function compressImages(inputPath, jpegQuality, maxDimension) {
     const imageData  = Buffer.from(obj.contents);
     const streamRef  = obj;
 
-    // ── JPEG (DCTDecode) ────────────────────────────────────────────────────
-    // Sharp handles RGB, Grayscale, AND CMYK JPEG inputs — it always converts
-    // to sRGB/Gray on output. We update the ColorSpace dict entry accordingly.
+    // ── JPEG (DCTDecode) — handles RGB, Gray, and CMYK ────────────────────
     if (filterName === '/DCTDecode') {
       tasks.push(
         (async () => {
@@ -175,27 +179,22 @@ async function compressImages(inputPath, jpegQuality, maxDimension) {
             if (compressed.length < imageData.length) {
               streamRef.contents = new Uint8Array(compressed);
               dict.set(PDFName.of('Length'), PDFNumber.of(compressed.length));
-
-              // Update ColorSpace to match sharp's output (always sRGB or Gray)
-              const outCs = info.channels === 1 ? '/DeviceGray' : '/DeviceRGB';
-              dict.set(PDFName.of('ColorSpace'), PDFName.of(outCs));
-
-              // Remove CMYK-specific ColorTransform hint if present
+              // Sharp always outputs sRGB or Grayscale — update dict to match
+              dict.set(PDFName.of('ColorSpace'),
+                PDFName.of(info.channels === 1 ? '/DeviceGray' : '/DeviceRGB'));
               if (typeof dict.delete === 'function')
                 dict.delete(PDFName.of('ColorTransform'));
-
               replaced++;
             }
-          } catch { /* sharp can't handle this image — skip */ }
+          } catch { /* sharp can't handle this particular image — skip */ }
         })()
       );
 
-    // ── PNG-like deflate (FlateDecode) ──────────────────────────────────────
+    // ── PNG-like deflate (FlateDecode) ─────────────────────────────────────
     } else if (filterName === '/FlateDecode') {
       const channels = guessChannels(cs);
-      if (!channels || channels === 4) continue; // skip CMYK raw & unknown
+      if (!channels) continue;
 
-      // Read predictor from DecodeParms
       let predictor = 1;
       const dp = dict.get(PDFName.of('DecodeParms'));
       if (dp && typeof dp.get === 'function') {
@@ -213,8 +212,7 @@ async function compressImages(inputPath, jpegQuality, maxDimension) {
               ? undoPNGPredictor(inflated, w, channels)
               : inflated;
 
-            // Strict sanity check — wrong channel count means corrupt pixels
-            if (raw.length !== w * h * channels) return;
+            if (raw.length !== w * h * channels) return; // pixel count mismatch
 
             const { data: compressed, info } = await sharp(
               raw, { raw: { width: w, height: h, channels } }
@@ -228,20 +226,20 @@ async function compressImages(inputPath, jpegQuality, maxDimension) {
               dict.set(PDFName.of('Filter'), PDFName.of('DCTDecode'));
               if (typeof dict.delete === 'function')
                 dict.delete(PDFName.of('DecodeParms'));
-              const outCs = info.channels === 1 ? '/DeviceGray' : '/DeviceRGB';
-              dict.set(PDFName.of('ColorSpace'), PDFName.of(outCs));
+              dict.set(PDFName.of('ColorSpace'),
+                PDFName.of(info.channels === 1 ? '/DeviceGray' : '/DeviceRGB'));
               dict.set(PDFName.of('Length'), PDFNumber.of(compressed.length));
               replaced++;
             }
-          } catch { /* skip unprocessable images */ }
+          } catch { /* skip */ }
         })()
       );
     }
   }
 
-  if (tasks.length === 0) return null;   // no eligible images at all
+  if (tasks.length === 0) return null;
   await Promise.all(tasks);
-  if (replaced === 0) return null;       // nothing got smaller — don't save
+  if (replaced === 0) return null; // nothing shrank — avoid pointless re-save
 
   const savedBytes = await pdfDoc.save({ useObjectStreams: false });
   const outPath    = path.join(OUTPUT_DIR, `sharp-${uuidv4()}.pdf`);
@@ -249,23 +247,21 @@ async function compressImages(inputPath, jpegQuality, maxDimension) {
   return { path: outPath, size: savedBytes.length };
 }
 
-// ─── Core compression worker ─────────────────────────────────────────────────
+// ─── Core compression worker ──────────────────────────────────────────────────
 async function runCompression(inputPath, level) {
   const originalSize = (await fs.stat(inputPath)).size;
   const outFilename  = `compressed-${uuidv4()}.pdf`;
   const outPath      = path.join(OUTPUT_DIR, outFilename);
 
-  // Per-level tuning — aggressive enough to hit 30–90% on image PDFs
   const cfg = {
-    low:    { quality: 65, maxDim: 2400 }, // fast; ~30-50% savings
-    medium: { quality: 45, maxDim: 1800 }, // balanced; ~50-70% savings
-    high:   { quality: 25, maxDim: 1200 }, // max; ~65-90% savings
+    low:    { quality: 65, maxDim: 2400 }, // ~30-50% savings
+    medium: { quality: 45, maxDim: 1800 }, // ~50-70% savings
+    high:   { quality: 25, maxDim: 1200 }, // ~65-90% savings
   };
   const { quality: jpegQuality, maxDim: maxDimension } = cfg[level] || cfg.medium;
 
   const muOut = path.join(OUTPUT_DIR, `mu-${uuidv4()}.pdf`);
 
-  // Run both passes in parallel
   const [imgResult, muResult] = await Promise.allSettled([
     compressImages(inputPath, jpegQuality, maxDimension),
     execFileAsync(
@@ -280,7 +276,6 @@ async function runCompression(inputPath, level) {
   const imgVal = imgResult.status === 'fulfilled' ? imgResult.value : null;
   const muVal  = muResult.status  === 'fulfilled' ? muResult.value  : null;
 
-  // Pick whichever shrank the file the most
   const candidates = [imgVal, muVal]
     .filter(v => v && v.size < originalSize)
     .sort((a, b) => a.size - b.size);
@@ -294,7 +289,6 @@ async function runCompression(inputPath, level) {
         .map(v => fs.remove(v.path).catch(() => {}))
     );
   } else {
-    // Nothing helped — return the original unchanged
     await fs.copy(inputPath, outPath);
     await Promise.allSettled([
       imgVal?.path ? fs.remove(imgVal.path).catch(() => {}) : null,
@@ -302,10 +296,8 @@ async function runCompression(inputPath, level) {
     ]);
   }
 
-  // Safety: never serve a file larger than the original
-  const newSize = (await fs.stat(outPath)).size;
+  const newSize      = (await fs.stat(outPath)).size;
   if (newSize > originalSize) await fs.copy(inputPath, outPath);
-
   const finalSize    = Math.min(newSize, originalSize);
   const reductionPct = Math.round((1 - finalSize / originalSize) * 100);
 
@@ -324,32 +316,28 @@ async function runCompression(inputPath, level) {
 }
 
 // ─── POST /api/optimize/compress ─────────────────────────────────────────────
-router.post('/compress', withJobId, upload.single('file'), (req, res) => {
+// Returns jobId immediately; compression runs in background.
+// Frontend polls GET .../status/:jobId every 3 s.
+router.post('/compress', withJobId, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
 
   const { jobId } = req;
   const level     = req.body.level || 'medium';
 
-  compressionJobs.set(jobId, { status: 'processing', createdAt: Date.now() });
+  // Write initial state to disk BEFORE responding — survives restarts
+  await setJob(jobId, { status: 'processing', createdAt: Date.now() });
 
   runCompression(req.file.path, level)
-    .then(result => {
-      compressionJobs.set(jobId, { status: 'done', createdAt: Date.now(), ...result });
-    })
-    .catch(err => {
-      compressionJobs.set(jobId, {
-        status:    'error',
-        createdAt: Date.now(),
-        error:     err.message || 'Compression failed.',
-      });
-    });
+    .then(result => setJob(jobId, { status: 'done',  createdAt: Date.now(), ...result }))
+    .catch(err   => setJob(jobId, { status: 'error', createdAt: Date.now(),
+                                     error: err.message || 'Compression failed.' }));
 
   res.json({ jobId, status: 'processing' });
 });
 
-// ─── GET /api/optimize/compress/status/:jobId ────────────────────────────────
-router.get('/compress/status/:jobId', (req, res) => {
-  const job = compressionJobs.get(req.params.jobId);
+// ─── GET /api/optimize/compress/status/:jobId ─────────────────────────────────
+router.get('/compress/status/:jobId', async (req, res) => {
+  const job = await getJob(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Job not found or expired.' });
   res.json(job);
 });
