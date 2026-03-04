@@ -207,7 +207,9 @@ export default function ToolModal({ tool, onClose }) {
             <div className="space-y-3">
               <div className="flex items-center gap-3 text-sm text-muted">
                 <Loader2 size={16} className="animate-spin text-accent" />
-                {status === 'uploading' ? `Uploading… ${progress}%` : 'Processing your file…'}
+                {status === 'uploading'
+                  ? `Uploading… ${progress}%`
+                  : 'Compressing on server — large files may take a minute…'}
               </div>
               <div className="h-1 bg-white/5 rounded-full overflow-hidden">
                 <div

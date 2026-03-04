@@ -11,108 +11,138 @@ const { loadPdf, savePdf, OUTPUT_DIR, formatBytes } = require('../services/pdfUt
 
 const execFileAsync = promisify(execFile);
 
+// ─── In-memory job store for async compression ────────────────────────────────
+// Each job: { status: 'processing'|'done'|'error', createdAt, ...result }
+const compressionJobs = new Map();
+
+// Purge jobs older than 2 hours every 10 minutes
+setInterval(() => {
+  const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+  for (const [id, job] of compressionJobs) {
+    if (job.createdAt < cutoff) compressionJobs.delete(id);
+  }
+}, 10 * 60 * 1000);
+
+// ─── Core compression worker (runs async, not in request lifecycle) ────────────
+async function runCompression(inputPath, level) {
+  const outFilename = `compressed-${uuidv4()}.pdf`;
+  const outPath = path.join(OUTPUT_DIR, outFilename);
+  const originalSize = (await fs.stat(inputPath)).size;
+
+  // mutool: fast structure/stream optimization, no image resampling (~1-3 sec)
+  const mutoolFlags = ['-g', '-G', '-z', '-i', '-f'];
+
+  // Ghostscript settings — the only tool that resamples embedded images
+  // -dNumRenderingThreads=4 : use all available cores
+  // -dMaxBitmap=500000000   : 500 MB RAM cache to avoid slow disk paging
+  const GS_LEVELS = {
+    low:    { pdfsettings: '/printer', dpi: 200 }, // 200 DPI, best quality, ~20-40% reduction
+    medium: { pdfsettings: '/ebook',   dpi: 150 }, // 150 DPI, balanced,    ~40-60% reduction
+    high:   { pdfsettings: '/screen',  dpi: 96  }, // 96 DPI,  smallest,    ~60-80% reduction
+  };
+  const gs = GS_LEVELS[level] || GS_LEVELS.medium;
+
+  function ghostscriptArgs(outputFile) {
+    return [
+      '-sDEVICE=pdfwrite',
+      '-dCompatibilityLevel=1.4',
+      `-dPDFSETTINGS=${gs.pdfsettings}`,
+      '-dNOPAUSE', '-dQUIET', '-dBATCH',
+      '-dNumRenderingThreads=4',
+      '-dMaxBitmap=500000000',
+      '-dDownsampleColorImages=true',
+      '-dDownsampleGrayImages=true',
+      '-dDownsampleMonoImages=true',
+      '-dColorImageDownsampleType=/Bicubic',
+      '-dGrayImageDownsampleType=/Bicubic',
+      '-dMonoImageDownsampleType=/Subsample',
+      `-dColorImageResolution=${gs.dpi}`,
+      `-dGrayImageResolution=${gs.dpi}`,
+      `-dMonoImageResolution=${gs.dpi}`,
+      `-sOutputFile=${outputFile}`,
+      inputPath,
+    ];
+  }
+
+  // Run Ghostscript + mutool in parallel for all levels.
+  // No timeout — this runs in background so large files can take as long as needed.
+  const gsOut = path.join(OUTPUT_DIR, `gs-${uuidv4()}.pdf`);
+  const muOut = path.join(OUTPUT_DIR, `mu-${uuidv4()}.pdf`);
+
+  const [gsResult, muResult] = await Promise.allSettled([
+    execFileAsync('gs', ghostscriptArgs(gsOut), { maxBuffer: 10 * 1024 * 1024 })
+      .then(async () => ({ path: gsOut, size: (await fs.stat(gsOut)).size })),
+    execFileAsync('mutool', ['clean', ...mutoolFlags, inputPath, muOut])
+      .then(async () => ({ path: muOut, size: (await fs.stat(muOut)).size })),
+  ]);
+
+  const candidates = [gsResult, muResult]
+    .filter(r => r.status === 'fulfilled' && r.value.size < originalSize)
+    .map(r => r.value)
+    .sort((a, b) => a.size - b.size);
+
+  if (candidates.length > 0) {
+    await fs.move(candidates[0].path, outPath, { overwrite: true });
+    await Promise.allSettled(
+      [gsOut, muOut].filter(p => p !== candidates[0].path).map(p => fs.remove(p))
+    );
+  } else {
+    // Nothing reduced the size — return original unchanged
+    await fs.copy(inputPath, outPath);
+    await Promise.allSettled([fs.remove(gsOut), fs.remove(muOut)]);
+  }
+
+  const newSize = (await fs.stat(outPath)).size;
+  if (newSize > originalSize) await fs.copy(inputPath, outPath);
+  const finalSize = Math.min(newSize, originalSize);
+  const reductionPct = Math.round((1 - finalSize / originalSize) * 100);
+
+  return {
+    success: true,
+    file: outFilename,
+    url: `/api/files/${outFilename}`,
+    alreadyOptimized: reductionPct === 0,
+    stats: [
+      { label: 'Original size', value: formatBytes(originalSize) },
+      { label: 'New size',      value: formatBytes(finalSize) },
+      { label: 'Reduced by',   value: `${reductionPct}%` },
+      { label: 'Level',        value: level.charAt(0).toUpperCase() + level.slice(1) },
+    ],
+  };
+}
+
 // ─── POST /api/optimize/compress ─────────────────────────────────────────────
-router.post('/compress', withJobId, upload.single('file'), async (req, res, next) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+// Returns { jobId, status: 'processing' } immediately — no timeout risk.
+router.post('/compress', withJobId, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
 
-    const level = req.body.level || 'medium';
-    const originalSize = (await fs.stat(req.file.path)).size;
-    const outFilename = `compressed-${uuidv4()}.pdf`;
-    const outPath = path.join(OUTPUT_DIR, outFilename);
+  const jobId = req.jobId;
+  const level = req.body.level || 'medium';
 
-    // mutool clean flags — fast structure/stream optimization, no image resampling
-    const mutoolFlags = ['-g', '-G', '-z', '-i', '-f'];
+  compressionJobs.set(jobId, { status: 'processing', createdAt: Date.now() });
 
-    // Build Ghostscript args for Medium/High.
-    // -dNumRenderingThreads=4 enables multi-core rendering (biggest speed gain).
-    // -dMaxBitmap=500000000 allows GS to use more RAM to avoid slow disk I/O.
-    // Explicit downsample flags are what actually compress embedded images.
-    const GS_LEVELS = {
-      medium: { pdfsettings: '/ebook',  dpi: 150 }, // 300→150 DPI, balanced
-      high:   { pdfsettings: '/screen', dpi: 96  }, // 300→96 DPI,  smallest
-    };
-
-    function ghostscriptArgs(outputFile, gs) {
-      return [
-        '-sDEVICE=pdfwrite',
-        '-dCompatibilityLevel=1.4',
-        `-dPDFSETTINGS=${gs.pdfsettings}`,
-        '-dNOPAUSE', '-dQUIET', '-dBATCH',
-        '-dNumRenderingThreads=4',
-        '-dMaxBitmap=500000000',
-        '-dDownsampleColorImages=true',
-        '-dDownsampleGrayImages=true',
-        '-dDownsampleMonoImages=true',
-        '-dColorImageDownsampleType=/Bicubic',
-        '-dGrayImageDownsampleType=/Bicubic',
-        '-dMonoImageDownsampleType=/Subsample',
-        `-dColorImageResolution=${gs.dpi}`,
-        `-dGrayImageResolution=${gs.dpi}`,
-        `-dMonoImageResolution=${gs.dpi}`,
-        `-sOutputFile=${outputFile}`,
-        req.file.path,
-      ];
-    }
-
-    if (level === 'low') {
-      // Low: mutool only — instant (1-3 sec). Optimizes structure, preserves all images at
-      // full quality. Accepts that image-heavy PDFs may show low/no reduction.
-      try {
-        await execFileAsync('mutool', ['clean', ...mutoolFlags, req.file.path, outPath]);
-      } catch (_) {
-        await fs.copy(req.file.path, outPath);
-      }
-    } else {
-      // Medium / High: Ghostscript (image resampling) + mutool in parallel.
-      // Ghostscript is the only tool that achieves 40-80% reduction on image-heavy PDFs.
-      const gs = GS_LEVELS[level] || GS_LEVELS.medium;
-      const gsOut = path.join(OUTPUT_DIR, `gs-${uuidv4()}.pdf`);
-      const muOut = path.join(OUTPUT_DIR, `mu-${uuidv4()}.pdf`);
-
-      const [gsResult, muResult] = await Promise.allSettled([
-        execFileAsync('gs', ghostscriptArgs(gsOut, gs), { maxBuffer: 1024 * 1024 * 10 })
-          .then(async () => ({ path: gsOut, size: (await fs.stat(gsOut)).size })),
-        execFileAsync('mutool', ['clean', ...mutoolFlags, req.file.path, muOut])
-          .then(async () => ({ path: muOut, size: (await fs.stat(muOut)).size })),
-      ]);
-
-      const candidates = [gsResult, muResult]
-        .filter(r => r.status === 'fulfilled' && r.value.size < originalSize)
-        .map(r => r.value)
-        .sort((a, b) => a.size - b.size);
-
-      if (candidates.length > 0) {
-        await fs.move(candidates[0].path, outPath, { overwrite: true });
-        await Promise.allSettled(
-          [gsOut, muOut].filter(p => p !== candidates[0].path).map(p => fs.remove(p))
-        );
-      } else {
-        await fs.copy(req.file.path, outPath);
-        await Promise.allSettled([fs.remove(gsOut), fs.remove(muOut)]);
-      }
-    }
-
-    const newSize = (await fs.stat(outPath)).size;
-    // Guarantee we never return something larger than the original
-    if (newSize > originalSize) await fs.copy(req.file.path, outPath);
-    const finalSize = Math.min(newSize, originalSize);
-
-    const reductionPct = Math.round((1 - finalSize / originalSize) * 100);
-
-    res.json({
-      success: true,
-      file: outFilename,
-      url: `/api/files/${outFilename}`,
-      alreadyOptimized: reductionPct === 0,
-      stats: [
-        { label: 'Original size', value: formatBytes(originalSize) },
-        { label: 'New size',      value: formatBytes(finalSize) },
-        { label: 'Reduced by',   value: `${reductionPct}%` },
-        { label: 'Level',        value: level.charAt(0).toUpperCase() + level.slice(1) },
-      ],
+  // Fire and forget — compression runs in background
+  runCompression(req.file.path, level)
+    .then(result => {
+      compressionJobs.set(jobId, { status: 'done', createdAt: Date.now(), ...result });
+    })
+    .catch(err => {
+      compressionJobs.set(jobId, {
+        status: 'error',
+        createdAt: Date.now(),
+        error: err.message || 'Compression failed.',
+      });
     });
-  } catch (e) { next(e); }
+
+  // Respond immediately — client will poll /compress/status/:jobId
+  res.json({ jobId, status: 'processing' });
+});
+
+// ─── GET /api/optimize/compress/status/:jobId ─────────────────────────────────
+router.get('/compress/status/:jobId', (req, res) => {
+  const job = compressionJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found or expired.' });
+  res.json(job);
 });
 
 // ─── POST /api/optimize/repair ────────────────────────────────────────────────
