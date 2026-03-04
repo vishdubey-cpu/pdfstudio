@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     graphicsmagick \
     ghostscript \
     qpdf \
+    mupdf-tools \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

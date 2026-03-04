@@ -17,56 +17,69 @@ router.post('/compress', withJobId, upload.single('file'), async (req, res, next
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
 
     const level = req.body.level || 'medium';
-    // Ghostscript PDFSETTINGS: /screen=72dpi(smallest), /ebook=150dpi(balanced), /printer=300dpi(quality)
-    const gsSettingsMap = { low: '/printer', medium: '/ebook', high: '/screen' };
-    const pdfsetting = gsSettingsMap[level] || '/ebook';
 
     const originalSize = (await fs.stat(req.file.path)).size;
     const outFilename = `compressed-${uuidv4()}.pdf`;
     const outPath = path.join(OUTPUT_DIR, outFilename);
 
-    // Step 1: Ghostscript — best for image-heavy PDFs
-    await execFileAsync('gs', [
-      '-sDEVICE=pdfwrite',
-      '-dCompatibilityLevel=1.4',
-      `-dPDFSETTINGS=${pdfsetting}`,
-      '-dNOPAUSE',
-      '-dQUIET',
-      '-dBATCH',
-      `-sOutputFile=${outPath}`,
-      req.file.path,
-    ]);
-    let newSize = (await fs.stat(outPath)).size;
+    // mutool clean flags: -g=garbage collect, -G=aggressive GC, -z=compress streams,
+    // -i=compress object streams, -f=compress fonts
+    const mutoolFlags = level === 'high' ? ['-g', '-G', '-z', '-i', '-f'] : ['-g', '-z', '-i', '-f'];
 
-    // Step 2: If Ghostscript made it BIGGER, try qpdf lossless stream compression
-    if (newSize >= originalSize) {
-      await fs.remove(outPath);
+    if (level === 'high') {
+      // High: run mutool and Ghostscript in parallel, use whichever is smaller
+      const gsOut  = path.join(OUTPUT_DIR, `gs-${uuidv4()}.pdf`);
+      const muOut  = path.join(OUTPUT_DIR, `mu-${uuidv4()}.pdf`);
+
+      const [gsResult, muResult] = await Promise.allSettled([
+        execFileAsync('gs', [
+          '-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.4', '-dPDFSETTINGS=/screen',
+          '-dNOPAUSE', '-dQUIET', '-dBATCH', `-sOutputFile=${gsOut}`, req.file.path,
+        ]).then(async () => ({ path: gsOut, size: (await fs.stat(gsOut)).size })),
+        execFileAsync('mutool', ['clean', ...mutoolFlags, req.file.path, muOut])
+          .then(async () => ({ path: muOut, size: (await fs.stat(muOut)).size })),
+      ]);
+
+      const candidates = [gsResult, muResult]
+        .filter(r => r.status === 'fulfilled' && r.value.size < originalSize)
+        .map(r => r.value)
+        .sort((a, b) => a.size - b.size);
+
+      if (candidates.length > 0) {
+        await fs.move(candidates[0].path, outPath, { overwrite: true });
+        // clean up the loser
+        await Promise.allSettled(
+          [gsOut, muOut].filter(p => p !== candidates[0].path).map(p => fs.remove(p))
+        );
+      } else {
+        // Neither helped — return original
+        await fs.copy(req.file.path, outPath);
+        await Promise.allSettled([fs.remove(gsOut), fs.remove(muOut)]);
+      }
+    } else {
+      // Low / Medium: mutool only — direct PDF structure optimisation, ~10x faster than Ghostscript
       try {
-        await execFileAsync('qpdf', [
-          '--compress-streams=y', '--object-streams=generate',
-          req.file.path, outPath,
-        ]);
-        newSize = (await fs.stat(outPath)).size;
-      } catch (_) { newSize = originalSize + 1; } // force fallback below
+        await execFileAsync('mutool', ['clean', ...mutoolFlags, req.file.path, outPath]);
+      } catch (_) {
+        await fs.copy(req.file.path, outPath); // fallback: return original
+      }
     }
 
-    // Step 3: If still bigger or equal, just return the original unchanged
-    if (newSize >= originalSize) {
-      await fs.copy(req.file.path, outPath);
-      newSize = originalSize;
-    }
+    const newSize = (await fs.stat(outPath)).size;
+    // Guarantee we never return something larger than the original
+    if (newSize > originalSize) await fs.copy(req.file.path, outPath);
+    const finalSize = Math.min(newSize, originalSize);
 
-    const reductionPct = Math.round((1 - newSize / originalSize) * 100);
-    const alreadyOptimized = reductionPct === 0;
+    const reductionPct = Math.round((1 - finalSize / originalSize) * 100);
 
     res.json({
       success: true,
       file: outFilename,
       url: `/api/files/${outFilename}`,
-      alreadyOptimized,
+      alreadyOptimized: reductionPct === 0,
       stats: [
         { label: 'Original size', value: formatBytes(originalSize) },
-        { label: 'New size',      value: formatBytes(newSize) },
+        { label: 'New size',      value: formatBytes(finalSize) },
         { label: 'Reduced by',   value: `${reductionPct}%` },
         { label: 'Level',        value: level.charAt(0).toUpperCase() + level.slice(1) },
       ],
