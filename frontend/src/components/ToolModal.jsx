@@ -209,7 +209,7 @@ export default function ToolModal({ tool, onClose }) {
                 <Loader2 size={16} className="animate-spin text-accent" />
                 {status === 'uploading'
                   ? `Uploading… ${progress}%`
-                  : 'Compressing on server — large files may take a minute…'}
+                  : 'Compressing… large files take 1–2 minutes, please wait'}
               </div>
               <div className="h-1 bg-white/5 rounded-full overflow-hidden">
                 <div
