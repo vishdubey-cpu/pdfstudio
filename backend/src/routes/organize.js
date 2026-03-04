@@ -1,12 +1,39 @@
 const express = require('express');
 const router = express.Router();
-const { PDFDocument } = require('pdf-lib');
+const { PDFDocument, degrees } = require('pdf-lib');
 const archiver = require('archiver');
 const path = require('path');
 const fs = require('fs-extra');
 const { v4: uuidv4 } = require('uuid');
 const { upload, withJobId } = require('../middleware/upload');
 const { loadPdf, savePdf, OUTPUT_DIR, formatBytes } = require('../services/pdfUtils');
+
+// Parse "1,3,5-7" → [1, 3, 5, 6, 7]  (1-indexed page numbers)
+function parsePagesList(input) {
+  if (!input || !String(input).trim()) return null;
+  const pages = [];
+  for (const part of String(input).split(',')) {
+    const trimmed = part.trim();
+    if (trimmed.includes('-')) {
+      const [a, b] = trimmed.split('-').map(n => parseInt(n.trim(), 10));
+      if (!isNaN(a) && !isNaN(b)) for (let i = a; i <= b; i++) pages.push(i);
+    } else {
+      const n = parseInt(trimmed, 10);
+      if (!isNaN(n)) pages.push(n);
+    }
+  }
+  return pages.length ? pages : null;
+}
+
+// Parse "1-3,4-6" → [{start:1,end:3},{start:4,end:6}]  (1-indexed)
+function parseSplitRanges(input) {
+  return String(input).split(',').map(r => {
+    const parts = r.trim().split('-').map(n => parseInt(n.trim(), 10));
+    const start = parts[0];
+    const end = parts.length > 1 ? parts[1] : parts[0];
+    return { start: isNaN(start) ? 1 : start, end: isNaN(end) ? start : end };
+  }).filter(r => !isNaN(r.start));
+}
 
 // ─── POST /api/organize/merge ─────────────────────────────────────────────────
 router.post('/merge', withJobId, upload.array('files', 20), async (req, res, next) => {
@@ -57,8 +84,9 @@ router.post('/split', withJobId, upload.single('file'), async (req, res, next) =
     if (mode === 'each') {
       ranges = Array.from({ length: totalPages }, (_, i) => ({ start: i, end: i }));
     } else if (req.body.ranges) {
-      const raw = JSON.parse(req.body.ranges);
-      ranges = raw.map(r => ({ start: r.start - 1, end: r.end - 1 }));
+      const parsed = parseSplitRanges(req.body.ranges);
+      if (!parsed.length) return res.status(400).json({ error: 'Invalid ranges format. Use e.g. 1-3,4-6' });
+      ranges = parsed.map(r => ({ start: r.start - 1, end: r.end - 1 }));
     } else {
       return res.status(400).json({ error: 'Provide ranges or mode=each' });
     }
@@ -121,7 +149,9 @@ router.post('/remove-pages', withJobId, upload.single('file'), async (req, res, 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!req.body.pages) return res.status(400).json({ error: 'Provide pages array.' });
 
-    const toRemove = new Set(JSON.parse(req.body.pages).map(n => n - 1));
+    const parsed = parsePagesList(req.body.pages);
+    if (!parsed) return res.status(400).json({ error: 'Invalid pages format. Use e.g. 1,3,5-7' });
+    const toRemove = new Set(parsed.map(n => n - 1));
     const srcDoc = await loadPdf(req.file.path);
     const total = srcDoc.getPageCount();
     const keepIndices = [];
@@ -157,7 +187,9 @@ router.post('/extract-pages', withJobId, upload.single('file'), async (req, res,
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!req.body.pages) return res.status(400).json({ error: 'Provide pages array.' });
 
-    const indices = JSON.parse(req.body.pages).map(n => n - 1);
+    const parsed = parsePagesList(req.body.pages);
+    if (!parsed) return res.status(400).json({ error: 'Invalid pages format. Use e.g. 1,2,4' });
+    const indices = parsed.map(n => n - 1);
     const srcDoc = await loadPdf(req.file.path);
     const newDoc = await PDFDocument.create();
     const pages = await newDoc.copyPages(srcDoc, indices);
@@ -180,7 +212,6 @@ router.post('/extract-pages', withJobId, upload.single('file'), async (req, res,
 });
 
 // ─── POST /api/organize/rotate ────────────────────────────────────────────────
-const { degrees } = require('pdf-lib');
 router.post('/rotate', withJobId, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
@@ -188,8 +219,9 @@ router.post('/rotate', withJobId, upload.single('file'), async (req, res, next) 
     const angle = parseInt(req.body.angle) || 90;
     const srcDoc = await loadPdf(req.file.path);
     const total = srcDoc.getPageCount();
-    const targetPages = req.body.pages
-      ? JSON.parse(req.body.pages).map(n => n - 1)
+    const parsed = req.body.pages ? parsePagesList(req.body.pages) : null;
+    const targetPages = parsed
+      ? parsed.map(n => n - 1)
       : Array.from({ length: total }, (_, i) => i);
 
     const newDoc = await PDFDocument.create();
@@ -224,7 +256,9 @@ router.post('/reorder', withJobId, upload.single('file'), async (req, res, next)
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!req.body.order) return res.status(400).json({ error: 'Provide order array.' });
 
-    const order = JSON.parse(req.body.order);
+    const parsed = parsePagesList(req.body.order);
+    if (!parsed) return res.status(400).json({ error: 'Invalid order format. Use e.g. 3,1,2' });
+    const order = parsed.map(n => n - 1);
     const srcDoc = await loadPdf(req.file.path);
     const newDoc = await PDFDocument.create();
     const pages = await newDoc.copyPages(srcDoc, order);

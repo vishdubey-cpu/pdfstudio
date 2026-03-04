@@ -1,25 +1,42 @@
 const express = require('express');
 const router = express.Router();
-const { PDFDocument } = require('pdf-lib');
+const { PDFDocument, rgb } = require('pdf-lib');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const path = require('path');
+const fs = require('fs-extra');
+const { v4: uuidv4 } = require('uuid');
 const { upload, withJobId } = require('../middleware/upload');
-const { loadPdf, savePdf } = require('../services/pdfUtils');
+const { loadPdf, savePdf, OUTPUT_DIR, formatBytes } = require('../services/pdfUtils');
+
+const execFileAsync = promisify(execFile);
 
 // ─── POST /api/security/protect ───────────────────────────────────────────────
-// Body: file, userPassword, ownerPassword (optional), permissions (optional JSON)
-// Note: pdf-lib doesn't natively support encryption; we use a metadata approach
-// and note to deploy with a real encryption library like node-qpdf or hummus in production.
 router.post('/protect', withJobId, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!req.body.userPassword) return res.status(400).json({ error: 'Password is required.' });
 
-    // Production note: use node-qpdf2 or spawn qpdf CLI for real encryption.
-    // pdf-lib doesn't support AES encryption natively.
-    // This stub returns the file with a note — wire up qpdf in your production deploy.
-    return res.status(501).json({
-      error: 'PDF encryption requires qpdf on the server. Install qpdf (apt-get install qpdf) and use node-qpdf2 package.',
-      hint: 'Add qpdf to your Railway Dockerfile and use: qpdf --encrypt userPw ownerPw 256 -- input.pdf output.pdf',
+    const userPw = req.body.userPassword;
+    const ownerPw = req.body.ownerPassword || userPw;
+    const outFilename = `protected-${uuidv4()}.pdf`;
+    const outPath = path.join(OUTPUT_DIR, outFilename);
+
+    await execFileAsync('qpdf', [
+      '--encrypt', userPw, ownerPw, '256', '--',
+      req.file.path, outPath,
+    ]);
+
+    const outSize = (await fs.stat(outPath)).size;
+    res.json({
+      success: true,
+      file: outFilename,
+      url: `/api/files/${outFilename}`,
+      stats: [
+        { label: 'Status',     value: 'Password protected ✓' },
+        { label: 'Encryption', value: 'AES-256' },
+        { label: 'File size',  value: formatBytes(outSize) },
+      ],
     });
   } catch (e) { next(e); }
 });
@@ -30,8 +47,9 @@ router.post('/unlock', withJobId, upload.single('file'), async (req, res, next) 
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
 
-    const password = req.body.password || '';
-    let bytes = await require('fs-extra').readFile(req.file.path);
+    if (!req.body.password) return res.status(400).json({ error: 'Password is required.' });
+    const password = req.body.password;
+    const bytes = await fs.readFile(req.file.path);
 
     let pdfDoc;
     try {
@@ -92,10 +110,12 @@ router.post('/redact', withJobId, upload.single('file'), async (req, res, next) 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!req.body.regions) return res.status(400).json({ error: 'regions array is required.' });
 
-    const regions = JSON.parse(req.body.regions);
+    let regions;
+    try { regions = JSON.parse(req.body.regions); } catch {
+      return res.status(400).json({ error: 'Invalid regions format. Provide a JSON array.' });
+    }
     const pdfDoc = await loadPdf(req.file.path);
     const pages = pdfDoc.getPages();
-    const { rgb } = require('pdf-lib');
 
     for (const region of regions) {
       const page = pages[(region.page || 1) - 1];
