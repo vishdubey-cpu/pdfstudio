@@ -21,23 +21,26 @@ router.post('/compress', withJobId, upload.single('file'), async (req, res, next
     const outFilename = `compressed-${uuidv4()}.pdf`;
     const outPath = path.join(OUTPUT_DIR, outFilename);
 
-    // Ghostscript settings per level.
-    // PDFSETTINGS controls JPEG quality; explicit DPI flags force image downsampling.
-    // This is what achieves 40-80% reduction on image-heavy PDFs.
-    const GS_LEVELS = {
-      low:    { pdfsettings: '/printer', dpi: 200 }, // 300→200 DPI, best quality
-      medium: { pdfsettings: '/ebook',   dpi: 150 }, // 300→150 DPI, balanced
-      high:   { pdfsettings: '/screen',  dpi: 96  }, // 300→96 DPI,  smallest
-    };
-    const gs = GS_LEVELS[level] || GS_LEVELS.medium;
+    // mutool clean flags — fast structure/stream optimization, no image resampling
+    const mutoolFlags = ['-g', '-G', '-z', '-i', '-f'];
 
-    function ghostscriptArgs(outputFile) {
+    // Build Ghostscript args for Medium/High.
+    // -dNumRenderingThreads=4 enables multi-core rendering (biggest speed gain).
+    // -dMaxBitmap=500000000 allows GS to use more RAM to avoid slow disk I/O.
+    // Explicit downsample flags are what actually compress embedded images.
+    const GS_LEVELS = {
+      medium: { pdfsettings: '/ebook',  dpi: 150 }, // 300→150 DPI, balanced
+      high:   { pdfsettings: '/screen', dpi: 96  }, // 300→96 DPI,  smallest
+    };
+
+    function ghostscriptArgs(outputFile, gs) {
       return [
         '-sDEVICE=pdfwrite',
         '-dCompatibilityLevel=1.4',
         `-dPDFSETTINGS=${gs.pdfsettings}`,
         '-dNOPAUSE', '-dQUIET', '-dBATCH',
-        // Force image downsampling — this is the key to actual compression
+        '-dNumRenderingThreads=4',
+        '-dMaxBitmap=500000000',
         '-dDownsampleColorImages=true',
         '-dDownsampleGrayImages=true',
         '-dDownsampleMonoImages=true',
@@ -52,36 +55,42 @@ router.post('/compress', withJobId, upload.single('file'), async (req, res, next
       ];
     }
 
-    // mutool clean flags for structure/stream compression (fast, no image resampling)
-    const mutoolFlags = ['-g', '-G', '-z', '-i', '-f'];
-
-    // Run Ghostscript (image compression) + mutool (structure) in parallel for ALL levels.
-    // Ghostscript is the only tool that resamples embedded images — essential for image-heavy PDFs.
-    // mutool wins on already-lean text-only PDFs. We pick whichever is smaller.
-    const gsOut = path.join(OUTPUT_DIR, `gs-${uuidv4()}.pdf`);
-    const muOut = path.join(OUTPUT_DIR, `mu-${uuidv4()}.pdf`);
-
-    const [gsResult, muResult] = await Promise.allSettled([
-      execFileAsync('gs', ghostscriptArgs(gsOut))
-        .then(async () => ({ path: gsOut, size: (await fs.stat(gsOut)).size })),
-      execFileAsync('mutool', ['clean', ...mutoolFlags, req.file.path, muOut])
-        .then(async () => ({ path: muOut, size: (await fs.stat(muOut)).size })),
-    ]);
-
-    const candidates = [gsResult, muResult]
-      .filter(r => r.status === 'fulfilled' && r.value.size < originalSize)
-      .map(r => r.value)
-      .sort((a, b) => a.size - b.size);
-
-    if (candidates.length > 0) {
-      await fs.move(candidates[0].path, outPath, { overwrite: true });
-      await Promise.allSettled(
-        [gsOut, muOut].filter(p => p !== candidates[0].path).map(p => fs.remove(p))
-      );
+    if (level === 'low') {
+      // Low: mutool only — instant (1-3 sec). Optimizes structure, preserves all images at
+      // full quality. Accepts that image-heavy PDFs may show low/no reduction.
+      try {
+        await execFileAsync('mutool', ['clean', ...mutoolFlags, req.file.path, outPath]);
+      } catch (_) {
+        await fs.copy(req.file.path, outPath);
+      }
     } else {
-      // Nothing reduced the size — return original unchanged
-      await fs.copy(req.file.path, outPath);
-      await Promise.allSettled([fs.remove(gsOut), fs.remove(muOut)]);
+      // Medium / High: Ghostscript (image resampling) + mutool in parallel.
+      // Ghostscript is the only tool that achieves 40-80% reduction on image-heavy PDFs.
+      const gs = GS_LEVELS[level] || GS_LEVELS.medium;
+      const gsOut = path.join(OUTPUT_DIR, `gs-${uuidv4()}.pdf`);
+      const muOut = path.join(OUTPUT_DIR, `mu-${uuidv4()}.pdf`);
+
+      const [gsResult, muResult] = await Promise.allSettled([
+        execFileAsync('gs', ghostscriptArgs(gsOut, gs), { maxBuffer: 1024 * 1024 * 10 })
+          .then(async () => ({ path: gsOut, size: (await fs.stat(gsOut)).size })),
+        execFileAsync('mutool', ['clean', ...mutoolFlags, req.file.path, muOut])
+          .then(async () => ({ path: muOut, size: (await fs.stat(muOut)).size })),
+      ]);
+
+      const candidates = [gsResult, muResult]
+        .filter(r => r.status === 'fulfilled' && r.value.size < originalSize)
+        .map(r => r.value)
+        .sort((a, b) => a.size - b.size);
+
+      if (candidates.length > 0) {
+        await fs.move(candidates[0].path, outPath, { overwrite: true });
+        await Promise.allSettled(
+          [gsOut, muOut].filter(p => p !== candidates[0].path).map(p => fs.remove(p))
+        );
+      } else {
+        await fs.copy(req.file.path, outPath);
+        await Promise.allSettled([fs.remove(gsOut), fs.remove(muOut)]);
+      }
     }
 
     const newSize = (await fs.stat(outPath)).size;

@@ -93,9 +93,9 @@ export const TOOLS = [
     accepts: '.pdf',
     fields: [
       { name: 'level', type: 'select', label: 'Compression level', options: [
-        { value: 'low', label: 'Low (best quality)' },
-        { value: 'medium', label: 'Medium (balanced)' },
-        { value: 'high', label: 'High (smallest size)' },
+        { value: 'low',    label: 'Low — fast, preserves image quality' },
+        { value: 'medium', label: 'Medium — 40–60% smaller, good quality' },
+        { value: 'high',   label: 'High — 60–80% smaller, max compression' },
       ]},
     ],
   },
