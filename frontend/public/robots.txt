@@ -1,7 +1,7 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://pdfstudio.app/sitemap.xml
+Sitemap: https://pdfstudio1.netlify.app/sitemap.xml
 
 # Block API and file download routes from indexing
 Disallow: /api/
