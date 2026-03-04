@@ -231,6 +231,7 @@ export default function ToolModal({ tool, onClose }) {
             const origSize  = result.stats?.find(s => s.label === 'Original size')
             const newSize   = result.stats?.find(s => s.label === 'New size')
             const isCompress = !!(reducedBy && origSize && newSize)
+            const alreadyOptimized = result.alreadyOptimized || reducedBy?.value === '0%'
             const suggestedTools = SUGGESTED_TOOL_IDS
               .filter(id => id !== tool.id)
               .slice(0, 4)
@@ -246,7 +247,7 @@ export default function ToolModal({ tool, onClose }) {
                 </div>
 
                 {/* Compression savings badge */}
-                {isCompress && (
+                {isCompress && !alreadyOptimized && (
                   <div className="bg-green-500/10 border border-green-500/20 rounded-2xl p-4 mb-5 text-center">
                     <div className="text-4xl font-bold text-green-400 leading-none mb-1">
                       {reducedBy.value} smaller
@@ -254,6 +255,17 @@ export default function ToolModal({ tool, onClose }) {
                     <div className="text-sm text-white/60 mt-2">
                       {origSize.value} &rarr; {newSize.value}
                     </div>
+                  </div>
+                )}
+
+                {/* Already optimized notice */}
+                {isCompress && alreadyOptimized && (
+                  <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mb-5 text-center">
+                    <div className="text-base font-semibold text-white mb-1">Already optimized</div>
+                    <div className="text-sm text-muted">
+                      This PDF is already highly compressed — no further reduction was possible.
+                    </div>
+                    <div className="text-xs text-white/40 mt-2">{origSize.value}</div>
                   </div>
                 )}
 

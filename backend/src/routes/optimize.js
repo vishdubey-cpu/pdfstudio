@@ -25,6 +25,7 @@ router.post('/compress', withJobId, upload.single('file'), async (req, res, next
     const outFilename = `compressed-${uuidv4()}.pdf`;
     const outPath = path.join(OUTPUT_DIR, outFilename);
 
+    // Step 1: Ghostscript — best for image-heavy PDFs
     await execFileAsync('gs', [
       '-sDEVICE=pdfwrite',
       '-dCompatibilityLevel=1.4',
@@ -35,18 +36,38 @@ router.post('/compress', withJobId, upload.single('file'), async (req, res, next
       `-sOutputFile=${outPath}`,
       req.file.path,
     ]);
+    let newSize = (await fs.stat(outPath)).size;
 
-    const newSize = (await fs.stat(outPath)).size;
+    // Step 2: If Ghostscript made it BIGGER, try qpdf lossless stream compression
+    if (newSize >= originalSize) {
+      await fs.remove(outPath);
+      try {
+        await execFileAsync('qpdf', [
+          '--compress-streams=y', '--object-streams=generate',
+          req.file.path, outPath,
+        ]);
+        newSize = (await fs.stat(outPath)).size;
+      } catch (_) { newSize = originalSize + 1; } // force fallback below
+    }
+
+    // Step 3: If still bigger or equal, just return the original unchanged
+    if (newSize >= originalSize) {
+      await fs.copy(req.file.path, outPath);
+      newSize = originalSize;
+    }
+
     const reductionPct = Math.round((1 - newSize / originalSize) * 100);
+    const alreadyOptimized = reductionPct === 0;
 
     res.json({
       success: true,
       file: outFilename,
       url: `/api/files/${outFilename}`,
+      alreadyOptimized,
       stats: [
         { label: 'Original size', value: formatBytes(originalSize) },
         { label: 'New size',      value: formatBytes(newSize) },
-        { label: 'Reduced by',   value: `${reductionPct > 0 ? reductionPct : 0}%` },
+        { label: 'Reduced by',   value: `${reductionPct}%` },
         { label: 'Level',        value: level.charAt(0).toUpperCase() + level.slice(1) },
       ],
     });
