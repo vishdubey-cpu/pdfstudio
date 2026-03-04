@@ -6,23 +6,20 @@ const path = require('path');
 const fs = require('fs-extra');
 const { v4: uuidv4 } = require('uuid');
 const { upload, withJobId } = require('../middleware/upload');
-const { loadPdf, savePdf, OUTPUT_DIR } = require('../services/pdfUtils');
+const { loadPdf, savePdf, OUTPUT_DIR, formatBytes } = require('../services/pdfUtils');
 
 // ─── POST /api/organize/merge ─────────────────────────────────────────────────
-// Body: multipart, files[] (multiple PDFs), order[] optional
 router.post('/merge', withJobId, upload.array('files', 20), async (req, res, next) => {
   try {
     if (!req.files || req.files.length < 2)
       return res.status(400).json({ error: 'Please upload at least 2 PDF files.' });
 
-    // Optional order param: comma-separated indices
     let order = req.files.map((_, i) => i);
     if (req.body.order) {
       try { order = JSON.parse(req.body.order); } catch (_) {}
     }
 
     const merged = await PDFDocument.create();
-
     for (const idx of order) {
       const file = req.files[idx];
       if (!file) continue;
@@ -32,12 +29,22 @@ router.post('/merge', withJobId, upload.array('files', 20), async (req, res, nex
     }
 
     const outPath = await savePdf(merged, 'merged');
-    res.json({ success: true, file: path.basename(outPath), url: `/api/files/${path.basename(outPath)}` });
+    const outSize = (await fs.stat(outPath)).size;
+
+    res.json({
+      success: true,
+      file: path.basename(outPath),
+      url: `/api/files/${path.basename(outPath)}`,
+      stats: [
+        { label: 'Files merged', value: String(req.files.length) },
+        { label: 'Total pages', value: String(merged.getPageCount()) },
+        { label: 'Output size', value: formatBytes(outSize) },
+      ],
+    });
   } catch (e) { next(e); }
 });
 
 // ─── POST /api/organize/split ─────────────────────────────────────────────────
-// Body: file (single PDF), ranges: JSON array of {start, end} (1-indexed) OR mode: 'each'
 router.post('/split', withJobId, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
@@ -51,7 +58,6 @@ router.post('/split', withJobId, upload.single('file'), async (req, res, next) =
       ranges = Array.from({ length: totalPages }, (_, i) => ({ start: i, end: i }));
     } else if (req.body.ranges) {
       const raw = JSON.parse(req.body.ranges);
-      // Convert 1-indexed to 0-indexed
       ranges = raw.map(r => ({ start: r.start - 1, end: r.end - 1 }));
     } else {
       return res.status(400).json({ error: 'Provide ranges or mode=each' });
@@ -70,10 +76,19 @@ router.post('/split', withJobId, upload.single('file'), async (req, res, next) =
     }
 
     if (outputFiles.length === 1) {
-      return res.json({ success: true, file: outputFiles[0], url: `/api/files/${outputFiles[0]}` });
+      const outSize = (await fs.stat(path.join(OUTPUT_DIR, outputFiles[0]))).size;
+      return res.json({
+        success: true,
+        file: outputFiles[0],
+        url: `/api/files/${outputFiles[0]}`,
+        stats: [
+          { label: 'Original pages', value: String(totalPages) },
+          { label: 'Parts created', value: '1' },
+          { label: 'Output size', value: formatBytes(outSize) },
+        ],
+      });
     }
 
-    // Zip multiple files
     const zipName = `split-${uuidv4()}.zip`;
     const zipPath = path.join(OUTPUT_DIR, zipName);
     await new Promise((resolve, reject) => {
@@ -86,18 +101,27 @@ router.post('/split', withJobId, upload.single('file'), async (req, res, next) =
       archive.finalize();
     });
 
-    res.json({ success: true, file: zipName, url: `/api/files/${zipName}` });
+    const zipSize = (await fs.stat(zipPath)).size;
+    res.json({
+      success: true,
+      file: zipName,
+      url: `/api/files/${zipName}`,
+      stats: [
+        { label: 'Original pages', value: String(totalPages) },
+        { label: 'Parts created', value: String(outputFiles.length) },
+        { label: 'ZIP size', value: formatBytes(zipSize) },
+      ],
+    });
   } catch (e) { next(e); }
 });
 
 // ─── POST /api/organize/remove-pages ─────────────────────────────────────────
-// Body: file, pages: JSON array of 1-indexed page numbers to remove
 router.post('/remove-pages', withJobId, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!req.body.pages) return res.status(400).json({ error: 'Provide pages array.' });
 
-    const toRemove = new Set(JSON.parse(req.body.pages).map(n => n - 1)); // to 0-indexed
+    const toRemove = new Set(JSON.parse(req.body.pages).map(n => n - 1));
     const srcDoc = await loadPdf(req.file.path);
     const total = srcDoc.getPageCount();
     const keepIndices = [];
@@ -111,12 +135,23 @@ router.post('/remove-pages', withJobId, upload.single('file'), async (req, res, 
     pages.forEach(p => newDoc.addPage(p));
 
     const outPath = await savePdf(newDoc, 'removed-pages');
-    res.json({ success: true, file: path.basename(outPath), url: `/api/files/${path.basename(outPath)}` });
+    const outSize = (await fs.stat(outPath)).size;
+
+    res.json({
+      success: true,
+      file: path.basename(outPath),
+      url: `/api/files/${path.basename(outPath)}`,
+      stats: [
+        { label: 'Original pages', value: String(total) },
+        { label: 'Pages removed', value: String(toRemove.size) },
+        { label: 'Remaining pages', value: String(keepIndices.length) },
+        { label: 'Output size', value: formatBytes(outSize) },
+      ],
+    });
   } catch (e) { next(e); }
 });
 
 // ─── POST /api/organize/extract-pages ────────────────────────────────────────
-// Body: file, pages: JSON array of 1-indexed page numbers to extract
 router.post('/extract-pages', withJobId, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
@@ -129,12 +164,23 @@ router.post('/extract-pages', withJobId, upload.single('file'), async (req, res,
     pages.forEach(p => newDoc.addPage(p));
 
     const outPath = await savePdf(newDoc, 'extracted');
-    res.json({ success: true, file: path.basename(outPath), url: `/api/files/${path.basename(outPath)}` });
+    const outSize = (await fs.stat(outPath)).size;
+
+    res.json({
+      success: true,
+      file: path.basename(outPath),
+      url: `/api/files/${path.basename(outPath)}`,
+      stats: [
+        { label: 'Source pages', value: String(srcDoc.getPageCount()) },
+        { label: 'Pages extracted', value: String(indices.length) },
+        { label: 'Output size', value: formatBytes(outSize) },
+      ],
+    });
   } catch (e) { next(e); }
 });
 
 // ─── POST /api/organize/rotate ────────────────────────────────────────────────
-// Body: file, angle: 90 | 180 | 270, pages: JSON array (optional, default all)
+const { degrees } = require('pdf-lib');
 router.post('/rotate', withJobId, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
@@ -156,12 +202,23 @@ router.post('/rotate', withJobId, upload.single('file'), async (req, res, next) 
     });
 
     const outPath = await savePdf(newDoc, 'rotated');
-    res.json({ success: true, file: path.basename(outPath), url: `/api/files/${path.basename(outPath)}` });
+    const outSize = (await fs.stat(outPath)).size;
+
+    res.json({
+      success: true,
+      file: path.basename(outPath),
+      url: `/api/files/${path.basename(outPath)}`,
+      stats: [
+        { label: 'Total pages', value: String(total) },
+        { label: 'Pages rotated', value: String(targetPages.length) },
+        { label: 'Rotation', value: `${angle}°` },
+        { label: 'Output size', value: formatBytes(outSize) },
+      ],
+    });
   } catch (e) { next(e); }
 });
 
 // ─── POST /api/organize/reorder ───────────────────────────────────────────────
-// Body: file, order: JSON array of 0-indexed page positions
 router.post('/reorder', withJobId, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
@@ -174,7 +231,17 @@ router.post('/reorder', withJobId, upload.single('file'), async (req, res, next)
     pages.forEach(p => newDoc.addPage(p));
 
     const outPath = await savePdf(newDoc, 'reordered');
-    res.json({ success: true, file: path.basename(outPath), url: `/api/files/${path.basename(outPath)}` });
+    const outSize = (await fs.stat(outPath)).size;
+
+    res.json({
+      success: true,
+      file: path.basename(outPath),
+      url: `/api/files/${path.basename(outPath)}`,
+      stats: [
+        { label: 'Pages reordered', value: String(order.length) },
+        { label: 'Output size', value: formatBytes(outSize) },
+      ],
+    });
   } catch (e) { next(e); }
 });
 

@@ -1,9 +1,12 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
-import { X, Upload, Download, CheckCircle, AlertCircle, Loader2, Shield } from 'lucide-react'
+import { X, Upload, Download, CheckCircle, AlertCircle, Loader2, Shield, ArrowRight } from 'lucide-react'
 import { submitJob, getDownloadUrl } from '../utils/api'
-import { COLOR_MAP } from '../utils/tools'
+import { COLOR_MAP, TOOLS } from '../utils/tools'
 import AdSlot from './AdSlot'
+
+const SUGGESTED_TOOL_IDS = ['merge', 'split', 'compress', 'protect', 'watermark', 'pdf-to-jpg', 'rotate', 'word-to-pdf']
 
 function FieldInput({ field, value, onChange }) {
   if (field.type === 'hidden') return null
@@ -65,6 +68,7 @@ function FieldInput({ field, value, onChange }) {
 }
 
 export default function ToolModal({ tool, onClose }) {
+  const navigate = useNavigate()
   const [files, setFiles] = useState([])
   const [fields, setFields] = useState(() => {
     const init = {}
@@ -222,53 +226,114 @@ export default function ToolModal({ tool, onClose }) {
           )}
 
           {/* Success */}
-          {status === 'done' && result && (
-            <div className="text-center py-4">
-              <CheckCircle className="mx-auto mb-4 text-green-400" size={40} />
-              <h3 className="font-display text-xl font-bold text-white mb-1">Done!</h3>
-              <p className="text-sm text-muted mb-6">Your file is ready to download.</p>
+          {status === 'done' && result && (() => {
+            const reducedBy = result.stats?.find(s => s.label === 'Reduced by')
+            const origSize  = result.stats?.find(s => s.label === 'Original size')
+            const newSize   = result.stats?.find(s => s.label === 'New size')
+            const isCompress = !!(reducedBy && origSize && newSize)
+            const suggestedTools = SUGGESTED_TOOL_IDS
+              .filter(id => id !== tool.id)
+              .slice(0, 4)
+              .map(id => TOOLS.find(t => t.id === id))
+              .filter(Boolean)
 
-              {result.url && (
-                <a
-                  href={getDownloadUrl(result.file)}
-                  download
-                  className="btn-primary inline-flex items-center gap-2 text-sm"
-                >
-                  <Download size={15} />
-                  Download {result.file?.split('-')[0]}
-                </a>
-              )}
-
-              {/* OCR text result */}
-              {result.fullText && (
-                <div className="mt-4 text-left">
-                  <label className="block text-xs text-muted mb-2 uppercase tracking-wider">Extracted text</label>
-                  <textarea
-                    readOnly
-                    value={result.fullText}
-                    rows={8}
-                    className="w-full bg-bg border border-white/10 rounded-xl px-4 py-3 text-sm text-white font-mono resize-none focus:outline-none"
-                  />
-                  <button
-                    onClick={() => navigator.clipboard.writeText(result.fullText)}
-                    className="btn-ghost mt-2 text-xs"
-                  >
-                    Copy text
-                  </button>
+            return (
+              <div className="py-2">
+                {/* Header */}
+                <div className="text-center mb-5">
+                  <CheckCircle className="mx-auto mb-3 text-green-400" size={36} />
+                  <h3 className="font-display text-xl font-bold text-white">Done!</h3>
                 </div>
-              )}
 
-              <button onClick={() => { setStatus('idle'); setFiles([]); setResult(null) }}
-                className="btn-ghost mt-3 text-sm">
-                Process another file
-              </button>
+                {/* Compression savings badge */}
+                {isCompress && (
+                  <div className="bg-green-500/10 border border-green-500/20 rounded-2xl p-4 mb-5 text-center">
+                    <div className="text-4xl font-bold text-green-400 leading-none mb-1">
+                      {reducedBy.value} smaller
+                    </div>
+                    <div className="text-sm text-white/60 mt-2">
+                      {origSize.value} &rarr; {newSize.value}
+                    </div>
+                  </div>
+                )}
 
-              {/* Ad on download page — highest RPM position, user is satisfied */}
-              <div className="mt-6">
-                <AdSlot slot="4444444444" format="rectangle" />
+                {/* Stats grid for non-compress tools */}
+                {result.stats && !isCompress && (
+                  <div className="grid grid-cols-2 gap-2 mb-5">
+                    {result.stats.map((s, i) => (
+                      <div key={i} className="bg-bg rounded-xl px-3 py-2.5">
+                        <div className="text-xs text-muted mb-0.5">{s.label}</div>
+                        <div className="text-sm font-semibold text-white">{s.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* OCR text result */}
+                {result.fullText && (
+                  <div className="mb-4 text-left">
+                    <label className="block text-xs text-muted mb-2 uppercase tracking-wider">Extracted text</label>
+                    <textarea
+                      readOnly
+                      value={result.fullText}
+                      rows={6}
+                      className="w-full bg-bg border border-white/10 rounded-xl px-4 py-3 text-sm text-white font-mono resize-none focus:outline-none"
+                    />
+                    <button
+                      onClick={() => navigator.clipboard.writeText(result.fullText)}
+                      className="btn-ghost mt-2 text-xs"
+                    >
+                      Copy text
+                    </button>
+                  </div>
+                )}
+
+                {/* Download button */}
+                {result.url && (
+                  <a
+                    href={getDownloadUrl(result.file)}
+                    download
+                    className="btn-primary inline-flex items-center justify-center gap-2 text-sm w-full mb-2"
+                  >
+                    <Download size={15} />
+                    {isCompress ? 'Download compressed PDF' : `Download ${tool.name.toLowerCase()}`}
+                  </a>
+                )}
+
+                <button
+                  onClick={() => { setStatus('idle'); setFiles([]); setResult(null) }}
+                  className="btn-ghost text-sm w-full mb-5"
+                >
+                  Process another file
+                </button>
+
+                {/* Continue with... */}
+                <div className="border-t border-white/5 pt-4">
+                  <p className="text-xs text-muted uppercase tracking-wider mb-3">Continue with...</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {suggestedTools.map(t => (
+                      <button
+                        key={t.id}
+                        onClick={() => { onClose(); navigate(`/tools/${t.id}`) }}
+                        className="flex items-center justify-between bg-bg hover:bg-white/5 rounded-xl px-3 py-2.5 text-left transition-colors group"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm shrink-0">{t.icon}</span>
+                          <span className="text-xs text-white truncate">{t.name}</span>
+                        </div>
+                        <ArrowRight size={12} className="text-muted group-hover:text-white transition-colors shrink-0 ml-1" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Ad */}
+                <div className="mt-5">
+                  <AdSlot slot="4444444444" format="rectangle" />
+                </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
         </div>
 
         {/* Footer */}
