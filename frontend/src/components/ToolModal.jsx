@@ -92,10 +92,11 @@ export default function ToolModal({ tool, onClose }) {
     setError('')
   }, [tool.multiFile])
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const { getRootProps, getInputProps, isDragActive, open: openFilePicker } = useDropzone({
     onDrop,
     accept: tool.accepts ? { '*/*': tool.accepts.split(',') } : undefined,
     multiple: !!tool.multiFile,
+    noClick: false,
   })
 
   const setField = (name, value) => setFields(prev => ({ ...prev, [name]: value }))
@@ -356,11 +357,15 @@ export default function ToolModal({ tool, onClose }) {
           </div>
           {status !== 'done' && (
             <button
-              onClick={handleSubmit}
-              disabled={files.length === 0 || status === 'uploading' || status === 'processing'}
+              onClick={files.length === 0 ? openFilePicker : handleSubmit}
+              disabled={status === 'uploading' || status === 'processing'}
               className="btn-primary text-sm disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {status === 'uploading' || status === 'processing' ? 'Processing…' : `Apply ${tool.name}`}
+              {status === 'uploading' || status === 'processing'
+                ? 'Processing…'
+                : files.length === 0
+                  ? `Select ${tool.accepts?.split(',')[0]?.replace('.', '')?.toUpperCase() || 'PDF'} file`
+                  : `Apply ${tool.name}`}
             </button>
           )}
         </div>
