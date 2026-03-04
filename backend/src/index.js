@@ -25,13 +25,29 @@ app.use(cors({
 app.use(morgan('dev'));
 app.use(express.json());
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 min
-  max: 60,
-  message: { error: 'Too many requests, please try again later.' },
+// ─── Rate limiting ────────────────────────────────────────────────────────────
+// Status-polling endpoints (GET .../status/:jobId) are hit every 3 s per job.
+// A single compression job can generate 30–60 poll requests if processing is
+// slow. Keep a generous limit so legitimate users are never blocked.
+
+// Upload / tool-action endpoints (POST) — 30 per 15 min per IP
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: { error: 'Too many requests. Please wait a few minutes and try again.' },
+  skip: (req) => req.method !== 'POST',
 });
-app.use('/api/', limiter);
+
+// Status-poll endpoints (GET) — 600 per 15 min per IP (plenty for async polling)
+const pollLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  message: { error: 'Too many requests. Please wait a few minutes and try again.' },
+  skip: (req) => req.method !== 'GET',
+});
+
+app.use('/api/', uploadLimiter);
+app.use('/api/', pollLimiter);
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/organize',  require('./routes/organize'));
@@ -46,14 +62,18 @@ app.get('/health', (_, res) => res.json({ status: 'ok', timestamp: new Date().to
 
 // ─── Cleanup job: delete files older than 2 hours ────────────────────────────
 async function cleanOldFiles(dir) {
-  const files = await fs.readdir(dir);
-  const now = Date.now();
-  for (const file of files) {
-    const fp = path.join(dir, file);
-    const stat = await fs.stat(fp);
-    if (now - stat.mtimeMs > 2 * 60 * 60 * 1000) {
-      await fs.remove(fp);
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const now = Date.now();
+    for (const entry of entries) {
+      const fp = path.join(dir, entry.name);
+      const stat = await fs.stat(fp);
+      if (now - stat.mtimeMs > 2 * 60 * 60 * 1000) {
+        await fs.remove(fp);
+      }
     }
+  } catch (e) {
+    console.error('[cleanup] Error reading dir:', e.message);
   }
 }
 
