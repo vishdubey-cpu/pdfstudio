@@ -42,28 +42,42 @@ router.post('/protect', withJobId, upload.single('file'), async (req, res, next)
 });
 
 // ─── POST /api/security/unlock ────────────────────────────────────────────────
-// Body: file, password
+// Uses qpdf (same tool as protect) — handles RC4-40, RC4-128, AES-128, AES-256.
+// pdf-lib only supports RC4 and silently fails on AES-encrypted PDFs (Aadhaar etc.)
 router.post('/unlock', withJobId, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
-
     if (!req.body.password) return res.status(400).json({ error: 'Password is required.' });
-    const password = req.body.password;
-    const bytes = await fs.readFile(req.file.path);
 
-    let pdfDoc;
+    const password    = req.body.password;
+    const outFilename = `unlocked-${uuidv4()}.pdf`;
+    const outPath     = path.join(OUTPUT_DIR, outFilename);
+
     try {
-      pdfDoc = await PDFDocument.load(bytes, {
-        password,
-        ignoreEncryption: false,
-      });
+      await execFileAsync('qpdf', [
+        `--password=${password}`,
+        '--decrypt',
+        req.file.path,
+        outPath,
+      ]);
     } catch (e) {
+      // qpdf exits non-zero on wrong password or unsupported encryption
       return res.status(400).json({ error: 'Incorrect password or could not unlock PDF.' });
     }
 
-    // Re-save without password
-    const outPath = await savePdf(pdfDoc, 'unlocked');
-    res.json({ success: true, file: path.basename(outPath), url: `/api/files/${path.basename(outPath)}` });
+    const originalSize = (await fs.stat(req.file.path)).size;
+    const outSize      = (await fs.stat(outPath)).size;
+
+    res.json({
+      success: true,
+      file:    outFilename,
+      url:     `/api/files/${outFilename}`,
+      stats: [
+        { label: 'Status',        value: 'Unlocked ✓' },
+        { label: 'Original size', value: formatBytes(originalSize) },
+        { label: 'Output size',   value: formatBytes(outSize) },
+      ],
+    });
   } catch (e) { next(e); }
 });
 
