@@ -118,27 +118,46 @@ app.get('/diagnose-gs', async (req, res) => {
     results.test_uploads_subdir_to_outputs = 'SUCCESS';
   } catch (e) { results.test_uploads_subdir_to_outputs = `FAIL: ${e.stderr||e.message}`; }
 
-  // Test 5: download real PDF (africau sample) and try both old+new interpreter
-  const https = require('https');
+  // Test 5: use a real uploaded PDF if one exists, else generate one with pdf-lib
+  const { PDFDocument: PDFDoc, rgb: prgb } = require('pdf-lib');
   const realPdfPath = '/tmp/gs-real-test.pdf';
-  const realOutOld  = '/tmp/gs-real-old.pdf';
-  const realOutNew  = '/tmp/gs-real-new.pdf';
-  await new Promise((resolve) => {
-    const f = fsLocal.createWriteStream(realPdfPath);
-    https.get('https://www.africau.edu/images/default/sample.pdf', r => { r.pipe(f); f.on('finish', resolve); }).on('error', resolve);
-  });
-  // Old interpreter (-dNEWPDF=false)
+  const realOut1    = '/tmp/gs-real-out1.pdf';
+  const realOut2    = '/tmp/gs-real-out2.pdf';
+  // Generate a real-ish PDF with text and a colored rectangle
   try {
-    await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dNEWPDF=false','-dPDFSETTINGS=/screen',`-sOutputFile=${realOutOld}`,realPdfPath], { timeout: 60000 });
-    const sz = (await fsLocal.stat(realOutOld)).size;
-    results.test_real_pdf_old_interp = `SUCCESS — ${sz} bytes`;
-  } catch (e) { results.test_real_pdf_old_interp = `FAIL stdout: ${(e.stdout||'').substring(0,500)} | stderr: ${(e.stderr||'').substring(0,200)}`; }
-  // New interpreter (default in GS 10)
+    const doc = await PDFDoc.create();
+    const page = doc.addPage([612, 792]);
+    page.drawRectangle({ x: 50, y: 700, width: 200, height: 50, color: prgb(1, 0, 0) });
+    page.drawText('Hello Ghostscript Test', { x: 50, y: 650, size: 16 });
+    for (let i = 0; i < 10; i++) {
+      const p2 = doc.addPage([612, 792]);
+      p2.drawText(`Page ${i + 2} of test PDF with enough content`, { x: 50, y: 700, size: 12 });
+      p2.drawRectangle({ x: 100, y: 400, width: 400, height: 200, color: prgb(0, 0.5, i / 10) });
+    }
+    const bytes = await doc.save();
+    await fsLocal.writeFile(realPdfPath, bytes);
+    results.realPdfSize = `${bytes.length} bytes`;
+  } catch (e) { results.realPdfGenErr = e.message; }
+
+  // Check font files exist
   try {
-    await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dNEWPDF=true','-dPDFSETTINGS=/screen',`-sOutputFile=${realOutNew}`,realPdfPath], { timeout: 60000 });
-    const sz = (await fsLocal.stat(realOutNew)).size;
-    results.test_real_pdf_new_interp = `SUCCESS — ${sz} bytes`;
-  } catch (e) { results.test_real_pdf_new_interp = `FAIL stdout: ${(e.stdout||'').substring(0,500)} | stderr: ${(e.stderr||'').substring(0,200)}`; }
+    const fontDir = await execFileAsync('ls', ['/usr/share/ghostscript/fonts/'], { timeout: 5000 });
+    results.gsFontsExist = `yes (${fontDir.stdout.split('\n').length} entries)`;
+  } catch (e) { results.gsFontsExist = `MISSING: ${e.message}`; }
+
+  // Test with exact compress-route args (no -dCompatibilityLevel, with -dNEWPDF=false)
+  try {
+    await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dQUIET','-dNEWPDF=false','-dPDFSETTINGS=/screen',`-sOutputFile=${realOut1}`,realPdfPath], { timeout: 60000 });
+    const sz = (await fsLocal.stat(realOut1)).size;
+    results.test_real_pdf_new_flags = `SUCCESS — ${sz} bytes`;
+  } catch (e) { results.test_real_pdf_new_flags = `FAIL stdout: ${(e.stdout||'').substring(0,600)} | stderr: ${(e.stderr||'').substring(0,300)}`; }
+
+  // Test without -dNEWPDF=false (default)
+  try {
+    await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dQUIET','-dPDFSETTINGS=/ebook',`-sOutputFile=${realOut2}`,realPdfPath], { timeout: 60000 });
+    const sz = (await fsLocal.stat(realOut2)).size;
+    results.test_real_pdf_default = `SUCCESS — ${sz} bytes`;
+  } catch (e) { results.test_real_pdf_default = `FAIL stdout: ${(e.stdout||'').substring(0,600)}`; }
 
   res.json(results);
 });
