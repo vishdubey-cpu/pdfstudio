@@ -63,11 +63,15 @@ async function runCompression(inputPath, level) {
   // /screen  = 72 DPI  (high — max compression)
   const pdfsettings = level === 'high' ? '/screen' : level === 'low' ? '/printer' : '/ebook';
 
+  // -dCompatibilityLevel=1.5 causes /syntaxerror in GS 10.0.0 with real PDFs — omit it.
+  // -dNEWPDF=false uses the older PS-based PDF interpreter which is more compatible.
+  // -dQUIET suppresses verbose output (avoids maxBuffer overrun on large files).
   const gsArgs = [
     '-sDEVICE=pdfwrite',
-    '-dCompatibilityLevel=1.5',
     '-dNOPAUSE',
     '-dBATCH',
+    '-dQUIET',
+    '-dNEWPDF=false',
     `-dPDFSETTINGS=${pdfsettings}`,
     `-sOutputFile=${outPath}`,
     inputPath,
@@ -76,15 +80,13 @@ async function runCompression(inputPath, level) {
   try {
     await execFileAsync('gs', gsArgs, { timeout: 600_000 });
   } catch (err) {
-    const gsErr = `${err.message} | stderr: ${err.stderr || ''} | stdout: ${err.stdout || ''} | code: ${err.code}`;
-    console.error('[compress] gs failed:', gsErr);
+    console.error('[compress] gs failed:', err.message, err.stdout || err.stderr || '');
     await fs.copy(inputPath, outPath);
     return {
       success:          true,
       file:             outFilename,
       url:              `/api/files/${outFilename}`,
       alreadyOptimized: true,
-      _gsError:         gsErr,
       stats: [
         { label: 'Original size', value: formatBytes(originalSize) },
         { label: 'New size',      value: formatBytes(originalSize) },

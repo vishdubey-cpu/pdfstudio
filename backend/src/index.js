@@ -60,7 +60,7 @@ app.use('/api/files',     require('./routes/files'));
 // Health check
 app.get('/health', (_, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
-// ─── GS Diagnostic (temp) ────────────────────────────────────────────────────
+// ─── GS Diagnostic ───────────────────────────────────────────────────────────
 app.get('/diagnose-gs', async (req, res) => {
   const { execFile } = require('child_process');
   const { promisify } = require('util');
