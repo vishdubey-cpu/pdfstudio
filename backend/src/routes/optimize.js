@@ -80,14 +80,15 @@ async function runCompression(inputPath, level) {
   try {
     await execFileAsync('gs', gsArgs, { timeout: 600_000 });
   } catch (err) {
-    // Log full stderr so we can debug future failures
-    console.error('[compress] gs failed:', err.message, err.stderr || '');
+    const gsErr = `${err.message} | stderr: ${err.stderr || ''} | code: ${err.code}`;
+    console.error('[compress] gs failed:', gsErr);
     await fs.copy(inputPath, outPath);
     return {
       success:          true,
       file:             outFilename,
       url:              `/api/files/${outFilename}`,
       alreadyOptimized: true,
+      _gsError:         gsErr,
       stats: [
         { label: 'Original size', value: formatBytes(originalSize) },
         { label: 'New size',      value: formatBytes(originalSize) },
