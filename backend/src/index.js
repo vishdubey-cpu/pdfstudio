@@ -60,6 +60,31 @@ app.use('/api/files',     require('./routes/files'));
 // Health check
 app.get('/health', (_, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
+// ─── GS Diagnostic (temp) ────────────────────────────────────────────────────
+app.get('/diagnose-gs', async (req, res) => {
+  const { execFile } = require('child_process');
+  const { promisify } = require('util');
+  const execFileAsync = promisify(execFile);
+  const results = {};
+  try {
+    const v = await execFileAsync('gs', ['--version'], { timeout: 10000 });
+    results.gsVersion = v.stdout.trim();
+  } catch (e) { results.gsVersion = `FAIL: ${e.message}`; }
+  try {
+    const find = await execFileAsync('find', ['/usr/share/ghostscript', '-name', 'gs_init.ps'], { timeout: 10000 });
+    results.gsInitPath = find.stdout.trim();
+  } catch (e) { results.gsInitPath = `FAIL: ${e.message}`; }
+  try {
+    const which = await execFileAsync('which', ['gs'], { timeout: 5000 });
+    results.gsPath = which.stdout.trim();
+  } catch (e) { results.gsPath = `FAIL: ${e.message}`; }
+  try {
+    const devices = await execFileAsync('gs', ['-dBATCH', '-dNOPAUSE', '-dNODISPLAY', '-q', '-c', 'devicenames pstack quit'], { timeout: 15000 });
+    results.devices = devices.stdout.trim().substring(0, 300);
+  } catch (e) { results.devices = `FAIL: ${e.message} | stderr: ${e.stderr || ''}`; }
+  res.json(results);
+});
+
 // ─── Cleanup job: delete files older than 2 hours ────────────────────────────
 async function cleanOldFiles(dir) {
   try {
