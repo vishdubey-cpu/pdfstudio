@@ -118,6 +118,28 @@ app.get('/diagnose-gs', async (req, res) => {
     results.test_uploads_subdir_to_outputs = 'SUCCESS';
   } catch (e) { results.test_uploads_subdir_to_outputs = `FAIL: ${e.stderr||e.message}`; }
 
+  // Test 5: download real PDF (africau sample) and try both old+new interpreter
+  const https = require('https');
+  const realPdfPath = '/tmp/gs-real-test.pdf';
+  const realOutOld  = '/tmp/gs-real-old.pdf';
+  const realOutNew  = '/tmp/gs-real-new.pdf';
+  await new Promise((resolve) => {
+    const f = fsLocal.createWriteStream(realPdfPath);
+    https.get('https://www.africau.edu/images/default/sample.pdf', r => { r.pipe(f); f.on('finish', resolve); }).on('error', resolve);
+  });
+  // Old interpreter (-dNEWPDF=false)
+  try {
+    await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dNEWPDF=false','-dPDFSETTINGS=/screen',`-sOutputFile=${realOutOld}`,realPdfPath], { timeout: 60000 });
+    const sz = (await fsLocal.stat(realOutOld)).size;
+    results.test_real_pdf_old_interp = `SUCCESS — ${sz} bytes`;
+  } catch (e) { results.test_real_pdf_old_interp = `FAIL: ${(e.stderr||'').substring(0,300)}`; }
+  // New interpreter (default in GS 10)
+  try {
+    await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dNEWPDF=true','-dPDFSETTINGS=/screen',`-sOutputFile=${realOutNew}`,realPdfPath], { timeout: 60000 });
+    const sz = (await fsLocal.stat(realOutNew)).size;
+    results.test_real_pdf_new_interp = `SUCCESS — ${sz} bytes`;
+  } catch (e) { results.test_real_pdf_new_interp = `FAIL: ${(e.stderr||'').substring(0,300)}`; }
+
   res.json(results);
 });
 
