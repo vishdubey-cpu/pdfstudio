@@ -80,7 +80,6 @@ app.get('/diagnose-gs', async (req, res) => {
     results.pdfwriteDevice = devCheck.stdout.trim() || 'not found in output';
   } catch (e) { results.pdfwriteDevice = `FAIL: ${e.message}`; }
 
-  // Write a minimal valid PDF and try to compress it
   const minPdf = Buffer.from(
     '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
     '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
@@ -88,22 +87,36 @@ app.get('/diagnose-gs', async (req, res) => {
     'xref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000058 00000 n\n' +
     '0000000115 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF'
   );
-  const inPath  = '/tmp/gs-diag-in.pdf';
-  const outPath = '/tmp/gs-diag-out.pdf';
+
+  // Test 1: /tmp → /tmp (known working)
+  const t1in = '/tmp/gs-t1-in.pdf'; const t1out = '/tmp/gs-t1-out.pdf';
+  await fsLocal.writeFile(t1in, minPdf);
   try {
-    await fsLocal.writeFile(inPath, minPdf);
-    const gsResult = await execFileAsync('gs', [
-      '-sDEVICE=pdfwrite', '-dNOPAUSE', '-dBATCH', '-dPDFSETTINGS=/screen',
-      `-sOutputFile=${outPath}`, inPath,
-    ], { timeout: 30000 });
-    const outStat = await fsLocal.stat(outPath);
-    results.pdfwriteTest = `SUCCESS — output ${outStat.size} bytes`;
-    results.gsStdout = gsResult.stdout.substring(0, 500);
-  } catch (e) {
-    results.pdfwriteTest = `FAIL: ${e.message}`;
-    results.gsStderr = (e.stderr || '').substring(0, 800);
-    results.gsStdout = (e.stdout || '').substring(0, 800);
-  }
+    await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dPDFSETTINGS=/screen',`-sOutputFile=${t1out}`,t1in], { timeout: 30000 });
+    results.test_tmp_to_tmp = 'SUCCESS';
+  } catch (e) { results.test_tmp_to_tmp = `FAIL: ${e.stderr||e.message}`; }
+
+  // Test 2: /tmp → /app/outputs/
+  const t2out = '/app/outputs/gs-diag-out.pdf';
+  try {
+    await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dPDFSETTINGS=/screen',`-sOutputFile=${t2out}`,t1in], { timeout: 30000 });
+    results.test_tmp_to_outputs = 'SUCCESS';
+  } catch (e) { results.test_tmp_to_outputs = `FAIL: ${e.stderr||e.message}`; }
+
+  // Test 3: /app/uploads/testdir/ → /tmp
+  const t3dir = '/app/uploads/gs-diag-test'; const t3in = `${t3dir}/test.pdf`; const t3out = '/tmp/gs-t3-out.pdf';
+  await fsLocal.ensureDir(t3dir); await fsLocal.writeFile(t3in, minPdf);
+  try {
+    await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dPDFSETTINGS=/screen',`-sOutputFile=${t3out}`,t3in], { timeout: 30000 });
+    results.test_uploads_subdir_to_tmp = 'SUCCESS';
+  } catch (e) { results.test_uploads_subdir_to_tmp = `FAIL: ${e.stderr||e.message}`; }
+
+  // Test 4: /app/uploads/testdir/ → /app/outputs/
+  const t4out = '/app/outputs/gs-diag-t4-out.pdf';
+  try {
+    await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dPDFSETTINGS=/screen',`-sOutputFile=${t4out}`,t3in], { timeout: 30000 });
+    results.test_uploads_subdir_to_outputs = 'SUCCESS';
+  } catch (e) { results.test_uploads_subdir_to_outputs = `FAIL: ${e.stderr||e.message}`; }
 
   res.json(results);
 });
