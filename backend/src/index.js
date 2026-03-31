@@ -64,24 +64,47 @@ app.get('/health', (_, res) => res.json({ status: 'ok', timestamp: new Date().to
 app.get('/diagnose-gs', async (req, res) => {
   const { execFile } = require('child_process');
   const { promisify } = require('util');
+  const fsLocal = require('fs-extra');
   const execFileAsync = promisify(execFile);
   const results = {};
+
   try {
     const v = await execFileAsync('gs', ['--version'], { timeout: 10000 });
     results.gsVersion = v.stdout.trim();
   } catch (e) { results.gsVersion = `FAIL: ${e.message}`; }
+
+  // Check if pdfwrite device is available
   try {
-    const find = await execFileAsync('find', ['/usr/share/ghostscript', '-name', 'gs_init.ps'], { timeout: 10000 });
-    results.gsInitPath = find.stdout.trim();
-  } catch (e) { results.gsInitPath = `FAIL: ${e.message}`; }
+    const devCheck = await execFileAsync('gs', ['-dBATCH', '-dNOPAUSE', '-dNODISPLAY', '-q',
+      '-c', 'devicenames { (pdfwrite) eq { (FOUND pdfwrite) = } if } forall quit'], { timeout: 15000 });
+    results.pdfwriteDevice = devCheck.stdout.trim() || 'not found in output';
+  } catch (e) { results.pdfwriteDevice = `FAIL: ${e.message}`; }
+
+  // Write a minimal valid PDF and try to compress it
+  const minPdf = Buffer.from(
+    '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
+    '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
+    '3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\n' +
+    'xref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000058 00000 n\n' +
+    '0000000115 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF'
+  );
+  const inPath  = '/tmp/gs-diag-in.pdf';
+  const outPath = '/tmp/gs-diag-out.pdf';
   try {
-    const which = await execFileAsync('which', ['gs'], { timeout: 5000 });
-    results.gsPath = which.stdout.trim();
-  } catch (e) { results.gsPath = `FAIL: ${e.message}`; }
-  try {
-    const devices = await execFileAsync('gs', ['-dBATCH', '-dNOPAUSE', '-dNODISPLAY', '-q', '-c', 'devicenames pstack quit'], { timeout: 15000 });
-    results.devices = devices.stdout.trim().substring(0, 300);
-  } catch (e) { results.devices = `FAIL: ${e.message} | stderr: ${e.stderr || ''}`; }
+    await fsLocal.writeFile(inPath, minPdf);
+    const gsResult = await execFileAsync('gs', [
+      '-sDEVICE=pdfwrite', '-dNOPAUSE', '-dBATCH', '-dPDFSETTINGS=/screen',
+      `-sOutputFile=${outPath}`, inPath,
+    ], { timeout: 30000 });
+    const outStat = await fsLocal.stat(outPath);
+    results.pdfwriteTest = `SUCCESS — output ${outStat.size} bytes`;
+    results.gsStdout = gsResult.stdout.substring(0, 500);
+  } catch (e) {
+    results.pdfwriteTest = `FAIL: ${e.message}`;
+    results.gsStderr = (e.stderr || '').substring(0, 800);
+    results.gsStdout = (e.stdout || '').substring(0, 800);
+  }
+
   res.json(results);
 });
 
