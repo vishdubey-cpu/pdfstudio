@@ -57,14 +57,11 @@ async function runCompression(inputPath, level) {
   const outFilename  = `compressed-${uuidv4()}.pdf`;
   const outPath      = path.join(OUTPUT_DIR, outFilename);
 
-  const cfg = {
-    low:    { dpi: 200, qfactor: '0.3' },
-    medium: { dpi: 150, qfactor: '0.6' },
-    high:   { dpi: 100, qfactor: '1.2' },
-  };
-  const { dpi, qfactor } = cfg[level] || cfg.medium;
-
-  const imageDict = `<</QFactor ${qfactor} /Blend 1 /ColorTransform 1 /HSamples [2 1 1 2] /VSamples [2 1 1 2]>>`;
+  // Map level → Ghostscript PDF settings preset
+  // /printer = 300 DPI (low compression, best quality)
+  // /ebook   = 150 DPI (medium — good balance, ~40-70% reduction on image PDFs)
+  // /screen  = 72 DPI  (high — max compression)
+  const pdfsettings = level === 'high' ? '/screen' : level === 'low' ? '/printer' : '/ebook';
 
   const gsArgs = [
     '-sDEVICE=pdfwrite',
@@ -73,48 +70,19 @@ async function runCompression(inputPath, level) {
     '-dBATCH',
     '-dQUIET',
     '-dSAFER',
-
-    // Convert CMYK → RGB (saves ~25% on CMYK scanned books like JEE PDFs)
-    '-dConvertCMYKImagesToRGB=true',
-
-    // Colour image downsampling
-    '-dDownsampleColorImages=true',
-    '-dColorImageDownsampleType=/Bicubic',
-    `-dColorImageResolution=${dpi}`,
-    `-dColorImageDownsampleThreshold=1.0`,
-    '-dAutoFilterColorImages=false',
-    '-dColorImageFilter=/DCTEncode',
-    `-dColorImageDict=${imageDict}`,
-
-    // Gray image downsampling
-    '-dDownsampleGrayImages=true',
-    '-dGrayImageDownsampleType=/Bicubic',
-    `-dGrayImageResolution=${dpi}`,
-    `-dGrayImageDownsampleThreshold=1.0`,
-    '-dAutoFilterGrayImages=false',
-    '-dGrayImageFilter=/DCTEncode',
-    `-dGrayImageDict=${imageDict}`,
-
-    // Keep mono images as-is (they're already tiny)
-    '-dDownsampleMonoImages=false',
-
-    // Multi-thread rendering (speeds up page rasterisation)
+    `-dPDFSETTINGS=${pdfsettings}`,
     '-dNumRenderingThreads=4',
     '-dMaxBitmap=500000000',
-
     `-sOutputFile=${outPath}`,
     inputPath,
   ];
 
   try {
-    await execFileAsync('gs', gsArgs, {
-      timeout: 600_000, // 10 min hard cap — the async-job pattern means no HTTP timeout
-    });
+    await execFileAsync('gs', gsArgs, { timeout: 600_000 });
   } catch (err) {
-    // GS failed — return original unchanged
-    console.error('[compress] gs failed:', err.message);
+    // Log full stderr so we can debug future failures
+    console.error('[compress] gs failed:', err.message, err.stderr || '');
     await fs.copy(inputPath, outPath);
-    const reductionPct = 0;
     return {
       success:          true,
       file:             outFilename,
