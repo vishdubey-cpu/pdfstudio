@@ -68,11 +68,7 @@ async function runCompression(inputPath, level) {
     '-dCompatibilityLevel=1.5',
     '-dNOPAUSE',
     '-dBATCH',
-    '-dQUIET',
-    '-dSAFER',
     `-dPDFSETTINGS=${pdfsettings}`,
-    '-dNumRenderingThreads=4',
-    '-dMaxBitmap=500000000',
     `-sOutputFile=${outPath}`,
     inputPath,
   ];
@@ -80,7 +76,7 @@ async function runCompression(inputPath, level) {
   try {
     await execFileAsync('gs', gsArgs, { timeout: 600_000 });
   } catch (err) {
-    const gsErr = `${err.message} | stderr: ${err.stderr || ''} | code: ${err.code}`;
+    const gsErr = `${err.message} | stderr: ${err.stderr || ''} | stdout: ${err.stdout || ''} | code: ${err.code}`;
     console.error('[compress] gs failed:', gsErr);
     await fs.copy(inputPath, outPath);
     return {
