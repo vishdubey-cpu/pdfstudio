@@ -132,13 +132,13 @@ app.get('/diagnose-gs', async (req, res) => {
     await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dNEWPDF=false','-dPDFSETTINGS=/screen',`-sOutputFile=${realOutOld}`,realPdfPath], { timeout: 60000 });
     const sz = (await fsLocal.stat(realOutOld)).size;
     results.test_real_pdf_old_interp = `SUCCESS — ${sz} bytes`;
-  } catch (e) { results.test_real_pdf_old_interp = `FAIL: ${(e.stderr||'').substring(0,300)}`; }
+  } catch (e) { results.test_real_pdf_old_interp = `FAIL stdout: ${(e.stdout||'').substring(0,500)} | stderr: ${(e.stderr||'').substring(0,200)}`; }
   // New interpreter (default in GS 10)
   try {
     await execFileAsync('gs', ['-sDEVICE=pdfwrite','-dNOPAUSE','-dBATCH','-dNEWPDF=true','-dPDFSETTINGS=/screen',`-sOutputFile=${realOutNew}`,realPdfPath], { timeout: 60000 });
     const sz = (await fsLocal.stat(realOutNew)).size;
     results.test_real_pdf_new_interp = `SUCCESS — ${sz} bytes`;
-  } catch (e) { results.test_real_pdf_new_interp = `FAIL: ${(e.stderr||'').substring(0,300)}`; }
+  } catch (e) { results.test_real_pdf_new_interp = `FAIL stdout: ${(e.stdout||'').substring(0,500)} | stderr: ${(e.stderr||'').substring(0,200)}`; }
 
   res.json(results);
 });
