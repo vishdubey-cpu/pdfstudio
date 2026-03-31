@@ -57,15 +57,25 @@ async function runCompression(inputPath, level) {
   const outFilename  = `compressed-${uuidv4()}.pdf`;
   const outPath      = path.join(OUTPUT_DIR, outFilename);
 
-  // Map level → Ghostscript PDF settings preset
-  // /printer = 300 DPI (low compression, best quality)
-  // /ebook   = 150 DPI (medium — good balance, ~40-70% reduction on image PDFs)
-  // /screen  = 72 DPI  (high — max compression)
+  // Map level → Ghostscript settings
+  // low:    /printer 300 DPI — best quality, modest reduction
+  // medium: /ebook   150 DPI — balanced (~40–70% on image PDFs)
+  // high:   /screen   72 DPI — max compression
   const pdfsettings = level === 'high' ? '/screen' : level === 'low' ? '/printer' : '/ebook';
 
-  // -dCompatibilityLevel=1.5 causes /syntaxerror in GS 10.0.0 with real PDFs — omit it.
-  // -dNEWPDF=false uses the older PS-based PDF interpreter which is more compatible.
-  // -dQUIET suppresses verbose output (avoids maxBuffer overrun on large files).
+  // Per-level image resolution targets (explicit downsampling so GS doesn't skip it)
+  const colorDPI = level === 'high' ? '96' : level === 'low' ? '300' : '150';
+  const grayDPI  = level === 'high' ? '96' : level === 'low' ? '300' : '150';
+
+  // JPEG quality factor: lower = smaller file, more compression
+  const jpegQ = level === 'high' ? '60' : level === 'low' ? '90' : '75';
+
+  // Notes:
+  //   -dCompatibilityLevel=1.5 causes /syntaxerror in GS 10.0.0 — omit it.
+  //   -dNEWPDF=false uses the older PS-based PDF interpreter (more compatible).
+  //   -dColorConversionStrategy=sRGB converts CMYK→RGB, saving ~25% on scanned PDFs.
+  //   -dDownsampleColorImages/GrayImages + explicit DPI ensures GS actually downsamples.
+  //   -dJPEGQ sets JPEG quality for recompressed images.
   const gsArgs = [
     '-sDEVICE=pdfwrite',
     '-dNOPAUSE',
@@ -73,6 +83,12 @@ async function runCompression(inputPath, level) {
     '-dQUIET',
     '-dNEWPDF=false',
     `-dPDFSETTINGS=${pdfsettings}`,
+    '-dColorConversionStrategy=/sRGB',
+    '-dDownsampleColorImages=true',
+    `-dColorImageResolution=${colorDPI}`,
+    '-dDownsampleGrayImages=true',
+    `-dGrayImageResolution=${grayDPI}`,
+    `-dJPEGQ=${jpegQ}`,
     `-sOutputFile=${outPath}`,
     inputPath,
   ];
