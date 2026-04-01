@@ -100,20 +100,6 @@ export const TOOL_SEO = {
       { q: 'Is image quality preserved in the PDF?', a: 'Images are encoded at 90% JPEG quality inside the PDF, which preserves excellent detail while keeping file size reasonable.' },
     ],
   },
-  sign: {
-    title: 'Sign PDF Online Free — Electronic Signature | PDF Studio',
-    description: 'Sign PDF documents online free. Draw, type, or upload your signature. Place it anywhere on any page. Download your signed PDF instantly.',
-    h1: 'Sign PDF Online — Free Electronic Signature',
-    intro: 'Add your electronic signature to any PDF document. Draw your signature with a mouse or touchscreen, type it out, or upload an image of your signature and position it anywhere.',
-    keywords: 'sign pdf, pdf signature, electronic signature pdf, esign pdf free, digital signature pdf',
-    faqs: [
-      { q: 'Is an electronic signature legally valid?', a: 'Electronic signatures are legally valid in most countries under laws like ESIGN (USA), eIDAS (EU), and IT Act (India). For highly regulated documents, a digital certificate may be required.' },
-      { q: 'Can I sign on a specific page?', a: 'Yes. Enter the page number in the "Sign on page" field to place your signature on any page of the document.' },
-      { q: 'Can I upload an image of my signature?', a: 'Yes. Prepare a PNG image with a transparent background and upload it as your signature file.' },
-      { q: 'Can multiple people sign the same PDF?', a: 'Yes. Sign the PDF once, download it, then share with the next signer to add their signature using the same tool.' },
-      { q: 'Is the signature embedded permanently?', a: 'Yes. The signature image is permanently embedded into the PDF pages. It cannot be removed without editing the PDF structure.' },
-    ],
-  },
   unlock: {
     title: 'Unlock PDF Online Free — Remove PDF Password | PDF Studio',
     description: 'Remove password protection from PDF files online free. Unlock encrypted PDFs instantly. Enter your password and download an unlocked version.',
@@ -189,51 +175,6 @@ export const TOOL_SEO = {
     ],
   },
 
-  repair: {
-    title: 'Repair PDF Online Free — Fix Corrupted PDF Files | PDF Studio',
-    description: 'Repair damaged or corrupted PDF files online for free. Fix PDFs that won\'t open or show errors. Recover content from broken files instantly.',
-    h1: 'Repair PDF — Fix Corrupted Files Online',
-    intro: 'Recover damaged or corrupted PDF files without any software. Our repair tool uses pdf-lib to rebuild broken PDF structure, recover readable pages, and produce a valid, openable PDF.',
-    keywords: 'repair pdf, fix corrupted pdf, fix pdf online, pdf repair tool, recover damaged pdf',
-    faqs: [
-      { q: 'What kinds of PDF corruption can be repaired?', a: 'Truncated files, invalid object references, broken cross-reference tables, and partially downloaded PDFs can often be repaired.' },
-      { q: 'Can all corrupted PDFs be repaired?', a: 'No. Severely corrupted files — where most of the content is unreadable — cannot be recovered. We attempt to save all reachable pages.' },
-      { q: 'Will I get all my pages back?', a: 'We recover as many pages as the damaged structure allows. Some pages near the corruption point may not be recoverable.' },
-      { q: 'Why does my PDF open in Acrobat but not other viewers?', a: 'Some PDF errors are tolerated by Acrobat but not by strict viewers. Our repair tool rebuilds the PDF structure to pass strict validation.' },
-      { q: 'Is repair free?', a: 'Yes, completely free. No signup, no watermark, no limits.' },
-    ],
-  },
-
-  'remove-pages': {
-    title: 'Remove Pages from PDF Online Free | PDF Studio',
-    description: 'Delete specific pages from a PDF online for free. Enter page numbers or ranges and download the cleaned PDF instantly. No signup required.',
-    h1: 'Remove Pages from PDF — Free Online Tool',
-    intro: 'Delete unwanted pages from any PDF. Enter the page numbers you want to remove — individually or as ranges like "1,3,5-7" — and download the cleaned PDF immediately.',
-    keywords: 'remove pages from pdf, delete pdf pages, pdf page remover, remove page pdf online, delete pages pdf free',
-    faqs: [
-      { q: 'How do I specify which pages to remove?', a: 'Enter page numbers separated by commas, or use ranges with a dash. For example: "1,3,5-7" removes pages 1, 3, 5, 6, and 7.' },
-      { q: 'Can I remove all pages?', a: 'No. You must keep at least one page. The tool will return an error if you try to remove all pages.' },
-      { q: 'Does removing pages change the remaining content?', a: 'No. Only the specified pages are removed. All other pages retain their original formatting, images, and text.' },
-      { q: 'Can I preview pages before removing them?', a: 'Not currently in the tool. We recommend using a PDF viewer to note page numbers before uploading.' },
-      { q: 'What happens to the original PDF?', a: 'Your original file is never modified. A new PDF containing only the kept pages is created and available for download.' },
-    ],
-  },
-
-  'extract-pages': {
-    title: 'Extract Pages from PDF Online Free | PDF Studio',
-    description: 'Extract specific pages from a PDF and save them as a new PDF file online for free. Enter page numbers or ranges. No signup, instant download.',
-    h1: 'Extract Pages from PDF — Free Online Tool',
-    intro: 'Pull out specific pages from any PDF and save them as a new document. Enter page numbers or ranges like "1,3,5-7" to extract exactly the pages you need.',
-    keywords: 'extract pages from pdf, pdf page extractor, save pdf pages, extract pdf pages free, pull pages from pdf',
-    faqs: [
-      { q: 'How is Extract Pages different from Remove Pages?', a: 'Extract Pages creates a new PDF containing only the pages you specify. Remove Pages creates a new PDF with those pages deleted. They are inverse operations.' },
-      { q: 'Can I extract non-consecutive pages?', a: 'Yes. Enter comma-separated page numbers like "1,4,7" to extract non-consecutive pages into a single PDF in that order.' },
-      { q: 'Can I extract a range of pages?', a: 'Yes. Use a dash for ranges: "3-8" extracts pages 3 through 8. Combine with commas: "1,3-5,9".' },
-      { q: 'Will the extracted pages maintain their original quality?', a: 'Yes. Pages are copied directly from the source PDF — no re-rendering, no quality loss.' },
-      { q: 'Is there a limit on how many pages I can extract?', a: 'No limit. You can extract any number of pages from a PDF of any size.' },
-    ],
-  },
-
   crop: {
     title: 'Crop PDF Pages Online Free — Trim PDF Margins | PDF Studio',
     description: 'Crop PDF pages online for free. Remove unwanted margins, trim whitespace, or define a custom crop area. No signup, instant download.',
@@ -294,63 +235,4 @@ export const TOOL_SEO = {
     ],
   },
 
-  'pdf-to-ppt': {
-    title: 'PDF to PowerPoint Converter Free Online — PDF to PPTX | PDF Studio',
-    description: 'Convert PDF to PowerPoint presentation online for free. Get an editable PPTX file from any PDF. No signup, instant download.',
-    h1: 'PDF to PowerPoint — Free Online Converter',
-    intro: 'Convert PDF documents into editable PowerPoint presentations. Each PDF page becomes a slide in your PPTX file, ready to edit in Microsoft PowerPoint or Google Slides.',
-    keywords: 'pdf to ppt, pdf to powerpoint, convert pdf to pptx, pdf to slides, pdf to powerpoint free',
-    faqs: [
-      { q: 'Is the PowerPoint file editable?', a: 'Yes. The output is a .pptx file you can open and edit in Microsoft PowerPoint, Google Slides, or LibreOffice Impress.' },
-      { q: 'How does each PDF page become a slide?', a: 'Each PDF page is converted to an image and placed as a full-slide background in the PPTX. Text is generally not editable from scanned PDFs.' },
-      { q: 'Does it work on PDFs with complex layouts?', a: 'Yes. Complex layouts, columns, and graphics are preserved as rendered slide backgrounds.' },
-      { q: 'Can I convert just selected pages to slides?', a: 'Not directly. Extract the pages you want using the Extract Pages tool, then convert to PowerPoint.' },
-      { q: 'Is there a slide limit?', a: 'No. Any PDF regardless of page count can be converted to a PPTX presentation.' },
-    ],
-  },
-
-  'pdf-to-excel': {
-    title: 'PDF to Excel Converter Free Online — PDF to XLSX | PDF Studio',
-    description: 'Convert PDF to Excel spreadsheet online for free. Extract tables from PDF into editable XLSX files. No signup, instant download.',
-    h1: 'PDF to Excel — Extract Tables from PDF Free',
-    intro: 'Convert PDF documents into editable Excel spreadsheets. Our converter extracts tables and data from PDFs into XLSX format, ready to open and edit in Microsoft Excel or Google Sheets.',
-    keywords: 'pdf to excel, convert pdf to excel, pdf to xlsx, extract table from pdf, pdf to spreadsheet free',
-    faqs: [
-      { q: 'Is the Excel file editable?', a: 'Yes. The output is a .xlsx file you can open and edit in Microsoft Excel, Google Sheets, or LibreOffice Calc.' },
-      { q: 'How well are tables extracted?', a: 'Simple, well-structured tables convert accurately. Complex merged cells or multi-column layouts may need manual adjustment after conversion.' },
-      { q: 'Does it work on scanned PDFs?', a: 'Scanned PDFs contain images of text, not actual data. Use the OCR tool first to extract text, then organize into a spreadsheet.' },
-      { q: 'Are multiple tables on one page extracted?', a: 'Yes. LibreOffice extracts all content from each page into the spreadsheet, including multiple tables.' },
-      { q: 'Is there a page limit?', a: 'No. PDFs of any size are fully supported.' },
-    ],
-  },
-
-  'pdf-to-pdfa': {
-    title: 'PDF to PDF/A Converter Free Online — Archive-Safe PDF | PDF Studio',
-    description: 'Convert PDF to PDF/A format online for free. Create archive-safe, long-term storage PDFs that comply with ISO standards. No signup.',
-    h1: 'PDF to PDF/A — Create Archive-Safe PDFs Online',
-    intro: 'Convert standard PDF files to PDF/A format for long-term digital archiving. PDF/A is an ISO standard designed for documents that need to be preserved and accessible for decades.',
-    keywords: 'pdf to pdfa, pdf/a converter, archive pdf, pdf/a online, pdf long term storage',
-    faqs: [
-      { q: 'What is PDF/A?', a: 'PDF/A is an ISO standard (ISO 19005) designed for long-term archiving. It embeds all fonts, colors, and metadata to ensure the document looks identical in any environment, now and in the future.' },
-      { q: 'Why do I need PDF/A instead of regular PDF?', a: 'Regular PDFs can rely on external fonts, encryption, and JavaScript that may not be available in the future. PDF/A eliminates these dependencies for guaranteed long-term readability.' },
-      { q: 'Which version of PDF/A is produced?', a: 'We produce PDF/A-1b compatible output — the most widely accepted format for legal, governmental, and archival use.' },
-      { q: 'Does conversion change the appearance of my document?', a: 'Minimal changes. Fonts are embedded and metadata is set. The visual appearance should remain identical.' },
-      { q: 'Is PDF/A required for government or legal submissions?', a: 'Many courts, government agencies, and record management systems require PDF/A for submissions. Check with the receiving organization for their specific requirements.' },
-    ],
-  },
-
-  redact: {
-    title: 'Redact PDF Online Free — Black Out Sensitive Text | PDF Studio',
-    description: 'Permanently redact sensitive information from PDF files online. Black out confidential text, names, and numbers. No signup, instant download.',
-    h1: 'Redact PDF — Black Out Sensitive Content Online',
-    intro: 'Permanently cover sensitive information in PDF documents with solid black rectangles. Protect personal data, confidential text, and classified information before sharing.',
-    keywords: 'redact pdf, black out pdf, pdf redaction, remove sensitive info from pdf, pdf censoring free',
-    faqs: [
-      { q: 'Is the redaction permanent?', a: 'Yes. Black rectangles are drawn over the specified areas at the PDF rendering layer. The visual content is permanently obscured in the output file.' },
-      { q: 'How do I specify what to redact?', a: 'Provide redaction regions as a JSON array with x, y, width, height, and page values. For example: [{"x":50,"y":700,"width":200,"height":20,"page":1}].' },
-      { q: 'Can the redacted text be recovered?', a: 'The black boxes cover the visual appearance. Note that this tool adds a black overlay — for court-grade redaction that removes underlying text data, use a dedicated legal PDF tool.' },
-      { q: 'Can I redact across multiple pages?', a: 'Yes. Provide multiple region objects with different page values in the JSON array and all will be redacted in one pass.' },
-      { q: 'What are the coordinate units?', a: 'Coordinates are in PDF points (pt), measured from the bottom-left corner of the page. 72pt = 1 inch. A standard A4 page is 595 × 842 pt.' },
-    ],
-  },
 }
